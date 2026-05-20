@@ -73,6 +73,10 @@ export function TrimEditor({
   const dragRef = useRef<DragHandle>(null);
   const justDraggedRef = useRef(false);
 
+  // Alt-drag on track creates a new delete region as user drags.
+  const altDragRef = useRef<{ id: string; startSec: number } | null>(null);
+  const [shiftHeld, setShiftHeld] = useState(false);
+
   const { thumbnails } = useThumbnails(recording.blob, 16, 56);
   const { peaks } = useWaveform(recording.blob, 240);
 
@@ -280,6 +284,23 @@ export function TrimEditor({
     videoEl.currentTime = next;
   };
 
+  // Track shift key state so user knows drag-to-cut is active
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(false);
+    };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', () => setShiftHeld(false));
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
+    };
+  }, []);
+
   // ────── Keyboard shortcuts ──────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -477,20 +498,35 @@ export function TrimEditor({
           <Shortcut keys="I" desc="Mark in (ořez začátek)" />
           <Shortcut keys="O" desc="Mark out (ořez konec)" />
           <Shortcut keys="C" desc="Vyříznout úsek tady" />
+          <Shortcut keys="Shift + drag" desc="Nakreslit výřez na timeline" />
           <Shortcut keys="⌫ / Delete" desc="Odebrat výřez" />
         </div>
       )}
 
       <div
         ref={trackRef}
-        className="relative h-20 bg-bg-elev rounded-xl select-none overflow-hidden cursor-pointer"
+        className={`relative h-20 bg-bg-elev rounded-xl select-none overflow-hidden ${
+          shiftHeld ? 'cursor-crosshair' : 'cursor-pointer'
+        }`}
         onMouseDown={(e) => {
-          // Only act if clicking the track background (not handles, which stop propagation)
           const t = pctFromX(e.clientX) * duration;
-          if (t >= trimStart && t <= trimEnd) {
-            handleTrackClick(e);
-            dragRef.current = { kind: 'playhead' };
+          if (t < trimStart || t > trimEnd) return;
+
+          // Shift-drag: start a new delete region that grows as user drags
+          if (e.shiftKey) {
+            e.stopPropagation();
+            const id = genId();
+            altDragRef.current = { id, startSec: t };
+            setDeletes((prev) => [
+              ...prev,
+              { id, start: t, end: Math.min(trimEnd, t + 0.05) },
+            ]);
+            dragRef.current = { kind: 'delEnd', id };
+            return;
           }
+
+          handleTrackClick(e);
+          dragRef.current = { kind: 'playhead' };
         }}
       >
         {/* Thumbnail strip */}
