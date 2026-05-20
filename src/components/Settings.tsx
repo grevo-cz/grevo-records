@@ -67,7 +67,7 @@ export function Settings() {
   };
 
   return (
-    <div className="min-h-full p-10 max-w-3xl mx-auto animate-fade-in">
+    <div className="min-h-full p-6 sm:p-10 max-w-3xl mx-auto animate-fade-in">
       <header className="pt-4 mb-8">
         <h1 className="text-3xl font-semibold tracking-tight">Nastavení</h1>
         <p className="text-text-secondary mt-2">

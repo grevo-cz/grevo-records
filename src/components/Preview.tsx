@@ -72,7 +72,7 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
   };
 
   return (
-    <div className="min-h-full p-8 max-w-6xl mx-auto animate-fade-in">
+    <div className="min-h-full p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">
       <header className="flex items-center justify-between gap-4 mb-5 pt-2">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button onClick={onBack} className="btn-ghost p-2">

@@ -8,6 +8,8 @@ import {
   CheckSquare,
   Square,
   X,
+  AlertTriangle,
+  HardDrive,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
@@ -147,19 +149,47 @@ export function Library({ onOpen }: Props) {
   };
 
   return (
-    <div className="min-h-full p-10 max-w-6xl mx-auto animate-fade-in">
-      <header className="flex items-end justify-between gap-4 mb-8 pt-4">
+    <div className="min-h-full p-6 sm:p-10 max-w-6xl mx-auto animate-fade-in">
+      <header className="flex flex-wrap items-end justify-between gap-4 mb-6 pt-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Knihovna</h1>
           <p className="text-text-secondary mt-2 text-sm">
-            Nahrávky uložené v prohlížeči{' '}
-            {usage && (
-              <span className="text-text-muted">
-                · využito {formatBytes(usage.usage)} z {formatBytes(usage.quota)}
-              </span>
-            )}
+            Nahrávky uložené v prohlížeči — vidíš jen své.
           </p>
         </div>
+        {usage && usage.quota > 0 && (() => {
+          const pct = (usage.usage / usage.quota) * 100;
+          const warn = pct > 80;
+          return (
+            <div
+              className={`flex items-center gap-3 px-4 py-2 rounded-xl border min-w-[260px] ${
+                warn
+                  ? 'bg-amber-500/10 border-amber-500/30'
+                  : 'bg-bg-card border-bg-border'
+              }`}
+            >
+              {warn ? (
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              ) : (
+                <HardDrive className="w-4 h-4 text-text-secondary shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-text-secondary mb-1 flex justify-between gap-2">
+                  <span>{formatBytes(usage.usage)} z {formatBytes(usage.quota)}</span>
+                  <span className="tabular-nums">{pct.toFixed(0)}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-bg-elev rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      warn ? 'bg-amber-400' : 'bg-accent'
+                    }`}
+                    style={{ width: `${Math.min(100, pct)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </header>
 
       <div className="flex flex-wrap items-center gap-2 mb-6">

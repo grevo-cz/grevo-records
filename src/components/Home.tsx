@@ -88,7 +88,7 @@ export function Home({ onStartRecording, onOpenSettings }: HomeProps) {
   };
 
   return (
-    <div className="min-h-full p-10 flex flex-col gap-6 max-w-3xl mx-auto animate-fade-in">
+    <div className="min-h-full p-6 sm:p-10 flex flex-col gap-6 max-w-3xl mx-auto animate-fade-in">
       <header className="pt-4">
         <div className="text-xs uppercase tracking-widest text-accent/80 mb-2">
           Records By Grevo
