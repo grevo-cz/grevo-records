@@ -1,94 +1,118 @@
-# Ráno — co máš udělat
+# Ráno — co dělat
 
-Spal jsem se přes noc nevypnul, ale tady je všechno hotové.
+## ✅ Co se v noci stalo
 
-## ✅ Co se v noci stalo (commits)
+15+ commitů, hlavní vylepšení po posledním screenshotu:
 
-Posledních ~10 commitů, hlavní vylepšení:
+### Auth + multi-user
+- 2 účty (`vodvarka@grevo.cz`, `gregor@grevo.cz`, oba heslo `Grevo!32462`)
+- Per-user Bunny settings (každý si nastavuje vlastní Storage Zone)
+- Per-user knihovna — Vodvárka nevidí Gregora a naopak
+- Login obrazovka, logout v sidebaru
+- Build SHA v sidebaru (vidíš, jestli máš nejnovější verzi)
 
-1. **Login systém** — 2 účty `vodvarka@grevo.cz` a `gregor@grevo.cz`, oba heslo `Grevo!32462`
-2. **Per-user Bunny settings** — každý si nastavuje vlastní Storage Zone
-3. **Per-user knihovna** — Vodvárka nevidí Gregora a naopak
-4. **Top-tier trim editor**:
-   - Thumbnail strip na timeline (frame snímky z videa)
-   - Audio waveform (vidíš kdy mluvíš)
-   - Keyboard shortcuts: Space play, J/L ±5s, ←→ frame step, I/O mark in/out, C cut, Delete remove
-   - Speed control 0.5× – 2×
-   - Click-to-scrub timeline
-   - Help panel (?)
-5. **Persistent trim panel** — vždy nad video v Preview, žádné „Střih" tlačítko
-6. **Onboarding banner** — když není Bunny nastaveno, navádí do Settings
-7. **Cache busting** — nginx no-cache pro index.html + CDN-Cache-Control
-8. **Build SHA v sidebaru** — vidíš na jaké jsi verzi
-9. **Self-hosted ffmpeg.wasm** — bez unpkg CORS issues
-10. **Full-screen recording preview**
+### Top-tier video editor
+- **Thumbnail strip** na timeline (16 frame snímků z videa)
+- **Audio waveform** přes celou timeline (Web Audio decode)
+- **Klávesové zkratky** — `?` v editoru zobrazí všechny:
+  - Space/K play/pauza, J/L ±5s, ←→ frame step, Shift+arrow ±1s
+  - I mark in, O mark out, C cut, Delete remove cut
+- **Speed control** 0.5× / 1× / 1.25× / 1.5× / 2×
+- **Click-to-scrub** timeline (klikni kdekoliv = playhead jump)
+- **„Najít ticho"** — auto-detekce delších pauz a navržení cuts
+- **Persistent panel** — trim editor vždy nad videem (nemusíš klikat „Střih")
 
-## 🚨 Co musíš udělat ručně
+### Recording UX
+- **Full-screen preview** během nahrávání (vidíš co nahráváš na celé ploše)
+- Time/status overlay nahoře, controls dole, kamera v rohu
+- Self-hosted ffmpeg.wasm → MP4 konverze funguje spolehlivě (~31 MB cache po prvním spuštění)
+- Lepší error messaging (žádné „undefined")
 
-### 1. Redeploy v Bunny
+### Library
+- Filter `Vše / Na Bunny / Lokální` s počty
+- Sort: Nejnovější / Nejstarší / Největší / Nejdelší
+- Cloud badge u nahraných videí
+- Search by name
 
-GHA postavila nový image (`:latest`), ale Bunny ho neumí automaticky pullnout. Musíš:
+### Infrastructure
+- nginx no-cache pro index.html + CDN-Cache-Control (Bunny CDN respektuje)
+- Vite injects BUILD_SHA + BUILD_DATE
+- Proxy v multi-tenant módu — credentials per request, nic se na serveru neukládá
 
-1. Otevři Bunny dashboard → Magic Containers → tvoje appka
-2. `app` kontejner → **Edit** → **Update Container** (bez změn, jen klikni)
-3. To stejné pro `records-by-grevo-proxy` kontejner
+## 🚨 1 manuální krok
 
-To pullne nejnovější `:latest` z GHCR.
+GHCR má nejnovější image. **Bunny pořád servuje starý** — potřebujeme update container:
 
-### 2. Hard refresh v Chrome
+1. https://dash.bunny.net → tvoje Magic Containers appka
+2. **app** container → **Edit** → **Update Container** (klikni Save bez změn)
+3. To samé pro **records-by-grevo-proxy** (i když ten už je multi-tenant, refresh nezaškodí)
+4. Počkej ~30s na rolling update
 
-`Cmd+Shift+R` na `https://mc-vk9ifcyrb6.bunny.run/`
+**Verifikace:**
+- Otevři https://mc-vk9ifcyrb6.bunny.run/ v Chrome (`Cmd+Shift+R` hard refresh)
+- V sidebaru vlevo dole uvidíš SHA — měl by být `69a333a` nebo novější
+- Pokud stejný starý → ještě 1× hard refresh, případně otevři v anonymním okně
 
-Pak se podívej do **sidebaru vlevo dole** — uvidíš `e58f491` (nebo nejnovější SHA). Pokud vidíš jiný SHA, Bunny ještě servuje starou verzi.
+## ⚙️ Setup po deployi
 
-### 3. Login a Settings
+1. **Login**: `vodvarka@grevo.cz` / `Grevo!32462`
+2. **Settings** → vyplň znovu Bunny:
+   - Storage Zone: `jan-vodvarka-apps`
+   - Region: Falkenstein
+   - Access Key: ten rotovaný (zadej PŘÍMO v UI)
+   - Pull Zone: `https://jan-vodvarka-apps.b-cdn.net`
+   - Folder: `recordings/`
+   - Bunny upload: ON
+   - **Otestovat** → mód `multi-tenant` ✅
+   - Uložit
+3. **Pošli Gregorovi**:
+   - URL: https://mc-vk9ifcyrb6.bunny.run/
+   - Login: `gregor@grevo.cz` / `Grevo!32462`
+   - V Settings si vyplní svoje Bunny údaje sám
 
-- Login: `vodvarka@grevo.cz` / `Grevo!32462`
-- Settings → vyplň znovu tvoje Bunny údaje:
-  - Storage Zone: `jan-vodvarka-apps`
-  - Region: Falkenstein
-  - Access Key: ten rotovaný (zadej PŘÍMO v UI, ne přes chat)
-  - Pull Zone: `https://jan-vodvarka-apps.b-cdn.net`
-  - Folder: `recordings/`
-  - Auto-upload: dle preference
-- Klikni **Otestovat** → mělo by říct mód `multi-tenant` ✅
-
-### 4. Pošli Gregorovi
-
-- URL: https://mc-vk9ifcyrb6.bunny.run/
-- Login: `gregor@grevo.cz` / `Grevo!32462`
-- Aby si v Settings vyplnil svoje vlastní Bunny údaje
-
-## 💡 Volitelné — auto-deploy GHA → Bunny
-
-Aby se příště Bunny automaticky aktualizoval po každém pushi:
-
-1. V Bunny dashboardu → Account settings → API → **Add API Key** (jméno: `github-actions`)
-2. Pak v GitHub repu (https://github.com/grevo-cz/grevo-records/settings/secrets/actions):
-   - **New repository secret**: `BUNNYNET_API_KEY` = ten klíč
-3. Najdi APP_ID svojí Magic Containers appky — v URL Bunny dashboardu (`/magic-containers/12345/...`)
-4. V GitHub repu → **Variables**:
-   - `BUNNY_SPA_APP_ID` = ten APP_ID
-   - `BUNNY_SPA_CONTAINER` = `app`
-   - `BUNNY_PROXY_APP_ID` = ten samý APP_ID (kontejnery jsou v jedné appce)
-   - `BUNNY_PROXY_CONTAINER` = `records-by-grevo-proxy`
-
-Pak `git push` = auto-deploy (rolling update).
-
-## 🧪 Test plán
-
-Po deployi otestuj:
+## 🎬 Test plán
 
 - [ ] Login funguje
-- [ ] Settings ukáže prázdná (per-user), vyplníš Bunny údaje
-- [ ] Test connection → ✅ multi-tenant
-- [ ] Nahraj 5s video s mikrofonem
-- [ ] Po stop: konverze do MP4 (sleduj progress)
-- [ ] V Preview: vidíš thumbnaily + waveform na timeline
-- [ ] Zkus klávesové zkratky (Space, J/L, I/O)
-- [ ] Klikni „Nahrát na Bunny" v Preview
-- [ ] Dostaneš zelený panel s linkem
-- [ ] Otevři link v anonymním okně — video se přehraje
-- [ ] Pošli link Gregorovi pro test
+- [ ] Settings první otevření prázdné (per-user), vyplníš
+- [ ] Test connection → multi-tenant ✅
+- [ ] Nahraj 10–15 s s mikrofonem (vyzkoušej pauzy mezi mluvením)
+- [ ] Při nahrávání vidíš full-screen preview
+- [ ] Po stop: progress bar konverze → MP4
+- [ ] V Preview: thumbnaily + waveform na timeline
+- [ ] Stiskni `?` → zobrazí klávesové zkratky
+- [ ] Zkus `Space`, `J`/`L`, `←`/`→`, `C`
+- [ ] Klikni **„Najít ticho"** — automaticky navrhne cuts
+- [ ] Klikni **„Uložit střih jako novou"** → vznikne nová zkrácená verze
+- [ ] V Library: filter „Lokální" → vidíš obě verze (originál + trimmed)
+- [ ] Klikni **„Nahrát na Bunny"** → progress → zelený panel s linkem
+- [ ] Zkopíruj link, otevři v anonymním okně → MP4 se přehraje
+- [ ] V Library: filter „Na Bunny" → trimmed má cloud badge
 
-Pokud cokoliv selže — pošli mi screenshot, fixnu.
+## 💡 Volitelný auto-deploy
+
+Aby každý git push auto-aktualizoval Bunny:
+
+1. Bunny dashboard → Account Settings → API → **Add API Key**
+2. https://github.com/grevo-cz/grevo-records/settings/secrets/actions:
+   - **Secret**: `BUNNYNET_API_KEY` = ten klíč
+3. https://github.com/grevo-cz/grevo-records/settings/variables/actions:
+   - `BUNNY_SPA_APP_ID` = APP_ID z URL Bunny dashboardu
+   - `BUNNY_SPA_CONTAINER` = `app`
+   - `BUNNY_PROXY_APP_ID` = stejný APP_ID
+   - `BUNNY_PROXY_CONTAINER` = `records-by-grevo-proxy`
+
+Pak `git push` = automatický rolling update v Bunny.
+
+## 🐛 Pokud něco selže
+
+- **„Site can't be reached"** → DNS cache (Cmd+Shift+R, nebo `sudo dscacheutil -flushcache`)
+- **Login nefunguje** → musí být HTTPS (lokálně přes `localhost` taky funguje)
+- **MP4 konverze fail** → otevři DevTools Network, ověř že `/ffmpeg/ffmpeg-core.wasm` se načítá (200, ne 404)
+- **Upload „Síťová chyba"** → CORS — zkontroluj že `ALLOWED_ORIGINS=*` v proxy env vars
+- **Bunny zobrazuje starý design** → Update Container nebyl proveden, opakuj krok 1 výše
+
+## 📦 Repo
+
+https://github.com/grevo-cz/grevo-records
+
+Commit history je čistý a popsaný. Hláška `dev` v sidebaru = lokální dev build, jakýkoliv 7-znakový hex = GHA build.
