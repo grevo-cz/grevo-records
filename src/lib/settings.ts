@@ -1,12 +1,19 @@
 export interface BunnySettings {
   enabled: boolean;
-  /** Base URL of the upload proxy, e.g. https://upload.grevo.cz */
+  /** Shared upload proxy URL (same for whole team). */
   proxyUrl: string;
-  /** Shared secret sent in x-upload-secret header. */
+  /** Shared secret (same for whole team) — authenticates against the proxy. */
   uploadSecret: string;
-  /** Folder inside Storage Zone (e.g. recordings/). */
+  /** This user's Bunny Storage Zone Name. */
+  storageZone: string;
+  /** Storage hostname based on region. */
+  storageHost: string;
+  /** This user's Storage Access Key (Password). */
+  accessKey: string;
+  /** This user's Pull Zone URL (CDN base, used to build shareable links). */
+  pullZoneUrl: string;
+  /** Subfolder inside the Storage Zone. */
   folder: string;
-  /** Automatically upload after recording stops. */
   autoUpload: boolean;
 }
 
@@ -14,11 +21,15 @@ export const DEFAULT_BUNNY: BunnySettings = {
   enabled: false,
   proxyUrl: '',
   uploadSecret: '',
+  storageZone: '',
+  storageHost: 'storage.bunnycdn.com',
+  accessKey: '',
+  pullZoneUrl: '',
   folder: 'recordings/',
   autoUpload: false,
 };
 
-const KEY = 'vr-bunny-settings-v2';
+const KEY = 'vr-bunny-settings-v3';
 
 export function loadBunnySettings(): BunnySettings {
   try {
@@ -35,5 +46,12 @@ export function saveBunnySettings(s: BunnySettings) {
 }
 
 export function isBunnyConfigured(s: BunnySettings = loadBunnySettings()): boolean {
-  return s.enabled && !!s.proxyUrl && !!s.uploadSecret;
+  return (
+    s.enabled &&
+    !!s.proxyUrl &&
+    !!s.uploadSecret &&
+    !!s.storageZone &&
+    !!s.accessKey &&
+    !!s.pullZoneUrl
+  );
 }

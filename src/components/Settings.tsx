@@ -9,6 +9,8 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Users,
+  Database,
 } from 'lucide-react';
 import {
   loadBunnySettings,
@@ -16,10 +18,23 @@ import {
   type BunnySettings,
 } from '../lib/settings';
 
+const REGIONS: { value: string; label: string }[] = [
+  { value: 'storage.bunnycdn.com', label: 'Falkenstein, DE (výchozí)' },
+  { value: 'ny.storage.bunnycdn.com', label: 'New York, US' },
+  { value: 'la.storage.bunnycdn.com', label: 'Los Angeles, US' },
+  { value: 'sg.storage.bunnycdn.com', label: 'Singapore' },
+  { value: 'syd.storage.bunnycdn.com', label: 'Sydney, AU' },
+  { value: 'uk.storage.bunnycdn.com', label: 'London, UK' },
+  { value: 'se.storage.bunnycdn.com', label: 'Stockholm, SE' },
+  { value: 'br.storage.bunnycdn.com', label: 'São Paulo, BR' },
+  { value: 'jh.storage.bunnycdn.com', label: 'Johannesburg, ZA' },
+];
+
 export function Settings() {
   const [bunny, setBunny] = useState<BunnySettings>(loadBunnySettings());
   const [savedFlash, setSavedFlash] = useState(false);
   const [revealSecret, setRevealSecret] = useState(false);
+  const [revealKey, setRevealKey] = useState(false);
   const [pingState, setPingState] = useState<
     | { kind: 'idle' }
     | { kind: 'pinging' }
@@ -60,7 +75,8 @@ export function Settings() {
       <header className="pt-4 mb-8">
         <h1 className="text-3xl font-semibold tracking-tight">Nastavení</h1>
         <p className="text-text-secondary mt-2">
-          Konfigurace upload proxy pro Bunny.net (sdílení nahrávek s klienty).
+          Konfigurace sdílení nahrávek přes Bunny.net. Sdílená proxy posílá tvoje
+          video na <strong>tvoji vlastní</strong> Bunny Storage Zone.
         </p>
       </header>
 
@@ -73,9 +89,9 @@ export function Settings() {
             <div>
               <h2 className="font-semibold">Bunny upload</h2>
               <p className="text-sm text-text-secondary mt-1">
-                Odesílání na vlastní proxy (Records By Grevo Upload Proxy), která
-                pak streamuje do Bunny Storage. Access Key zůstává schovaný na
-                serveru, v prohlížeči je jen sdílený secret.
+                Multi-tenant: každý uživatel má svoje Bunny údaje. Proxy je
+                společná pro celý tým, ale tvůj Access Key i video jdou jen do
+                tvojí Storage Zone.
               </p>
             </div>
           </div>
@@ -83,89 +99,176 @@ export function Settings() {
         </div>
 
         <div
-          className={`space-y-4 transition-opacity ${
+          className={`transition-opacity ${
             bunny.enabled ? '' : 'opacity-50 pointer-events-none'
           }`}
         >
-          <Field
-            label="Proxy URL"
-            hint="Adresa nasazené upload proxy, např. https://upload.grevo.cz nebo https://my-proxy.b-cdn.net"
-          >
-            <input
-              type="text"
-              className="input w-full font-mono"
-              placeholder="https://upload.grevo.cz"
-              value={bunny.proxyUrl}
-              onChange={(e) =>
-                update('proxyUrl', e.target.value.trim().replace(/\/+$/, ''))
-              }
-            />
-          </Field>
-
-          <Field
-            label="Upload Secret"
-            hint={
-              'Sdílený řetězec mezi proxy (env UPLOAD_SECRET) a aplikací. Doporučení: openssl rand -hex 32'
-            }
-          >
-            <div className="relative">
+          {/* ─── Sekce 1: Team proxy ─── */}
+          <div className="flex items-center gap-2 mb-3 mt-2">
+            <Users className="w-4 h-4 text-text-secondary" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-text-secondary">
+              Sdílené (od admin týmu)
+            </h3>
+          </div>
+          <div className="space-y-4 mb-6">
+            <Field
+              label="Proxy URL"
+              hint="Adresa nasazené upload proxy. Stejná pro tebe i kolegu."
+            >
               <input
-                type={revealSecret ? 'text' : 'password'}
-                className="input w-full pr-10 font-mono"
-                placeholder="••••••••••••••••"
-                value={bunny.uploadSecret}
-                onChange={(e) => update('uploadSecret', e.target.value.trim())}
+                type="text"
+                className="input w-full font-mono"
+                placeholder="https://mc-xxxxxxxx.bunny.run"
+                value={bunny.proxyUrl}
+                onChange={(e) =>
+                  update('proxyUrl', e.target.value.trim().replace(/\/+$/, ''))
+                }
               />
-              <button
-                type="button"
-                onClick={() => setRevealSecret((r) => !r)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-text-muted hover:text-text-primary"
-                title={revealSecret ? 'Skrýt' : 'Zobrazit'}
-              >
-                {revealSecret ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-          </Field>
+            </Field>
 
-          <Field
-            label="Cílová složka"
-            hint="Cesta uvnitř Storage Zone. Soubory budou ukládány s názvem nahrávky."
-          >
-            <input
-              type="text"
-              className="input w-full font-mono"
-              placeholder="recordings/"
-              value={bunny.folder}
-              onChange={(e) =>
-                update(
-                  'folder',
-                  e.target.value.replace(/^\/+/, '').replace(/\/?$/, '/')
-                )
-              }
-            />
-          </Field>
-
-          <div className="flex items-center justify-between bg-bg-elev rounded-xl p-4">
-            <div>
-              <div className="font-medium text-sm">Auto-upload po nahrávání</div>
-              <div className="text-xs text-text-secondary mt-0.5">
-                Hned po stopnutí a konverzi do MP4 se video automaticky pošle a
-                v Library uvidíš odkaz. Když je vypnuté, nahráváš manuálně
-                tlačítkem v Preview / Library.
+            <Field
+              label="Upload Secret"
+              hint="Sdílený řetězec mezi proxy (env UPLOAD_SECRET) a aplikací. Pošli ho kolegovi."
+            >
+              <div className="relative">
+                <input
+                  type={revealSecret ? 'text' : 'password'}
+                  className="input w-full pr-10 font-mono"
+                  placeholder="••••••••••••••••"
+                  value={bunny.uploadSecret}
+                  onChange={(e) => update('uploadSecret', e.target.value.trim())}
+                />
+                <button
+                  type="button"
+                  onClick={() => setRevealSecret((r) => !r)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-text-muted hover:text-text-primary"
+                >
+                  {revealSecret ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
               </div>
-            </div>
-            <Toggle
-              on={bunny.autoUpload}
-              onChange={(v) => update('autoUpload', v)}
-            />
+            </Field>
           </div>
 
-          {/* Test connection */}
-          <div className="bg-bg-elev rounded-xl p-4">
+          {/* ─── Sekce 2: User's own Bunny ─── */}
+          <div className="flex items-center gap-2 mb-3 mt-6 pt-6 border-t border-bg-border">
+            <Database className="w-4 h-4 text-accent" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-accent">
+              Tvoje Bunny Storage
+            </h3>
+          </div>
+          <div className="space-y-4">
+            <Field
+              label="Storage Zone Name"
+              hint={'Najdeš v Bunny dashboardu → Storage. Např. „jan-vodvarka-apps".'}
+            >
+              <input
+                type="text"
+                className="input w-full font-mono"
+                placeholder="my-recordings"
+                value={bunny.storageZone}
+                onChange={(e) => update('storageZone', e.target.value.trim())}
+              />
+            </Field>
+
+            <Field
+              label="Storage Region"
+              hint="Region tvojí Storage Zone (najdeš v Bunny → Storage → Access)."
+            >
+              <select
+                className="input w-full"
+                value={bunny.storageHost}
+                onChange={(e) => update('storageHost', e.target.value)}
+              >
+                {REGIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field
+              label="Storage Access Key (Password)"
+              hint="Storage Zone → FTP & API Access → Password. Ukládá se jen v tvém prohlížeči, posílá se přes HTTPS do proxy."
+            >
+              <div className="relative">
+                <input
+                  type={revealKey ? 'text' : 'password'}
+                  className="input w-full pr-10 font-mono"
+                  placeholder="••••••••-••••-••••-••••-••••••••••••"
+                  value={bunny.accessKey}
+                  onChange={(e) => update('accessKey', e.target.value.trim())}
+                />
+                <button
+                  type="button"
+                  onClick={() => setRevealKey((r) => !r)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-text-muted hover:text-text-primary"
+                >
+                  {revealKey ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </Field>
+
+            <Field
+              label="Pull Zone URL"
+              hint="CDN URL na Pull Zone napojený na tvoji Storage Zone. Bude použito v sdílecích linkách."
+            >
+              <input
+                type="text"
+                className="input w-full font-mono"
+                placeholder="https://my-zone.b-cdn.net"
+                value={bunny.pullZoneUrl}
+                onChange={(e) =>
+                  update(
+                    'pullZoneUrl',
+                    e.target.value.trim().replace(/\/+$/, '')
+                  )
+                }
+              />
+            </Field>
+
+            <Field
+              label="Cílová složka"
+              hint="Cesta uvnitř Storage Zone. Soubory budou ukládány s názvem nahrávky."
+            >
+              <input
+                type="text"
+                className="input w-full font-mono"
+                placeholder="recordings/"
+                value={bunny.folder}
+                onChange={(e) =>
+                  update(
+                    'folder',
+                    e.target.value.replace(/^\/+/, '').replace(/\/?$/, '/')
+                  )
+                }
+              />
+            </Field>
+
+            <div className="flex items-center justify-between bg-bg-elev rounded-xl p-4">
+              <div>
+                <div className="font-medium text-sm">Auto-upload po nahrávání</div>
+                <div className="text-xs text-text-secondary mt-0.5">
+                  Hned po stopnutí a konverzi do MP4 se video automaticky pošle.
+                </div>
+              </div>
+              <Toggle
+                on={bunny.autoUpload}
+                onChange={(v) => update('autoUpload', v)}
+              />
+            </div>
+          </div>
+
+          {/* ─── Test connection ─── */}
+          <div className="bg-bg-elev rounded-xl p-4 mt-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-text-secondary" />
@@ -189,14 +292,11 @@ export function Settings() {
               <div className="mt-3 text-xs text-success flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 <div>
-                  Proxy běží. Storage zone:{' '}
+                  Proxy běží (mód:{' '}
                   <code className="text-text-primary">
-                    {pingState.data?.storage?.zone}
+                    {pingState.data?.mode || 'unknown'}
                   </code>
-                  , pull zone:{' '}
-                  <code className="text-text-primary">
-                    {pingState.data?.pullZone}
-                  </code>
+                  )
                 </div>
               </div>
             )}
@@ -206,7 +306,7 @@ export function Settings() {
                 <div>
                   Spojení selhalo: {pingState.message}.
                   <br />
-                  Zkontroluj Proxy URL a CORS na serveru (ALLOWED_ORIGINS).
+                  Zkontroluj Proxy URL a CORS (ALLOWED_ORIGINS na serveru).
                 </div>
               </div>
             )}
@@ -229,26 +329,18 @@ export function Settings() {
       </section>
 
       <section className="card p-5 mt-6 border-amber-500/30 bg-amber-500/5">
-        <h3 className="font-medium text-sm">Jak nasadit proxy</h3>
-        <ol className="text-sm text-text-secondary mt-2 space-y-2 list-decimal list-inside">
+        <h3 className="font-medium text-sm">Bezpečnost</h3>
+        <ul className="text-sm text-text-secondary mt-2 space-y-1 list-disc list-inside">
+          <li>Tvůj Access Key je uložen jen v tvém prohlížeči (localStorage), nikam jinam.</li>
           <li>
-            Ve složce <code className="text-text-primary">/server</code>{' '}
-            zkopíruj <code className="text-text-primary">.env.example</code> →{' '}
-            <code className="text-text-primary">.env</code> a doplň Bunny údaje.
+            V každém uploadu posíláš Access Key přes HTTPS do proxy, která ho
+            předá Bunny. Proxy klíč neukládá.
           </li>
           <li>
-            Nasaď přes Docker do Bunny Magic Containers:{' '}
-            <code className="text-text-primary">cd server &amp;&amp; docker build -t records-proxy .</code>
+            Kolega zadá svoje vlastní Storage Zone + Access Key → uploady jdou
+            do jeho účtu, ne tvého.
           </li>
-          <li>
-            Push do <code className="text-text-primary">containers.bunny.net</code>
-            a nadeploy v dashboardu na portu 8080.
-          </li>
-          <li>
-            Sem zadej výslednou URL proxy a Upload Secret. <strong>Otestuj</strong>{' '}
-            spojení a začni nahrávat.
-          </li>
-        </ol>
+        </ul>
       </section>
     </div>
   );

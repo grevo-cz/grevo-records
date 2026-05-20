@@ -1,35 +1,21 @@
-// Records By Grevo — Bunny upload proxy
-// Receives video uploads from the SPA, forwards them to Bunny Storage with
-// the access key kept server-side. Returns a CDN URL for sharing.
+// Records By Grevo — Bunny upload proxy (multi-tenant)
+// Each upload request supplies its own Bunny credentials via headers; the
+// proxy keeps only an `UPLOAD_SECRET` (shared team password) and CORS config.
 
 import express from 'express';
 import https from 'node:https';
 
 const {
-  BUNNY_STORAGE_ZONE,
-  BUNNY_STORAGE_HOST = 'storage.bunnycdn.com',
-  BUNNY_ACCESS_KEY,
-  BUNNY_PULL_ZONE_URL,
   UPLOAD_SECRET,
   PORT = 8080,
   ALLOWED_ORIGINS = '*',
 } = process.env;
 
-const required = {
-  BUNNY_STORAGE_ZONE,
-  BUNNY_ACCESS_KEY,
-  BUNNY_PULL_ZONE_URL,
-  UPLOAD_SECRET,
-};
-const missing = Object.entries(required)
-  .filter(([, v]) => !v)
-  .map(([k]) => k);
-if (missing.length) {
-  console.error(`[fatal] Missing required env vars: ${missing.join(', ')}`);
+if (!UPLOAD_SECRET) {
+  console.error('[fatal] Missing required env var: UPLOAD_SECRET');
   process.exit(1);
 }
 
-const PULL_ZONE_BASE = String(BUNNY_PULL_ZONE_URL).replace(/\/$/, '');
 const ALLOWED = String(ALLOWED_ORIGINS).split(',').map((s) => s.trim());
 const ALLOW_ALL = ALLOWED.includes('*');
 
@@ -48,12 +34,10 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, x-upload-secret'
+    'Content-Type, x-upload-secret, x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone'
   );
   res.setHeader('Access-Control-Max-Age', '86400');
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
 
@@ -62,8 +46,8 @@ app.get('/', (_req, res) => {
   res.json({
     name: 'records-by-grevo-proxy',
     status: 'ok',
-    storage: { zone: BUNNY_STORAGE_ZONE, host: BUNNY_STORAGE_HOST },
-    pullZone: PULL_ZONE_BASE,
+    mode: 'multi-tenant',
+    info: 'Send Bunny credentials via headers x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone',
   });
 });
 
@@ -77,6 +61,23 @@ function checkSecret(req, res) {
     return false;
   }
   return true;
+}
+
+function readBunnyCreds(req, res) {
+  const zone = String(req.headers['x-bunny-zone'] || '').trim();
+  const host = String(req.headers['x-bunny-host'] || 'storage.bunnycdn.com').trim();
+  const key = String(req.headers['x-bunny-key'] || '').trim();
+  const pull = String(req.headers['x-pull-zone'] || '').trim().replace(/\/+$/, '');
+
+  if (!zone || !key || !pull) {
+    res.status(400).json({
+      ok: false,
+      error:
+        'Missing Bunny credentials. Required headers: x-bunny-zone, x-bunny-key, x-pull-zone',
+    });
+    return null;
+  }
+  return { zone, host, key, pull };
 }
 
 function sanitizeName(input) {
@@ -102,6 +103,8 @@ function sanitizeFolder(input) {
 // ────── Upload (streaming PUT to Bunny) ──────
 app.post('/upload', (req, res) => {
   if (!checkSecret(req, res)) return;
+  const creds = readBunnyCreds(req, res);
+  if (!creds) return;
 
   const name = sanitizeName(req.query.name);
   const folder = sanitizeFolder(req.query.folder);
@@ -110,12 +113,12 @@ app.post('/upload', (req, res) => {
   }
 
   const objectPath = `${folder}${name}`;
-  const bunnyUrl = `https://${BUNNY_STORAGE_HOST}/${BUNNY_STORAGE_ZONE}/${objectPath}`;
+  const bunnyUrl = `https://${creds.host}/${creds.zone}/${objectPath}`;
   const contentType = req.headers['content-type'] || 'application/octet-stream';
   const contentLength = req.headers['content-length'];
 
   console.log(
-    `[upload] ${objectPath} (${contentLength ? `${contentLength} B` : 'streamed'}, ${contentType})`
+    `[upload] ${creds.zone}/${objectPath} (${contentLength ? `${contentLength} B` : 'streamed'}, ${contentType})`
   );
 
   const proxyReq = https.request(
@@ -123,7 +126,7 @@ app.post('/upload', (req, res) => {
     {
       method: 'PUT',
       headers: {
-        AccessKey: BUNNY_ACCESS_KEY,
+        AccessKey: creds.key,
         'Content-Type': contentType,
         ...(contentLength ? { 'Content-Length': contentLength } : {}),
       },
@@ -137,8 +140,8 @@ app.post('/upload', (req, res) => {
         if (status >= 200 && status < 300) {
           res.json({
             ok: true,
-            url: `${PULL_ZONE_BASE}/${objectPath}`,
-            storagePath: `/${BUNNY_STORAGE_ZONE}/${objectPath}`,
+            url: `${creds.pull}/${objectPath}`,
+            storagePath: `/${creds.zone}/${objectPath}`,
             size: contentLength ? Number(contentLength) : undefined,
           });
         } else {
@@ -169,9 +172,11 @@ app.post('/upload', (req, res) => {
   req.pipe(proxyReq);
 });
 
-// ────── Delete from Bunny ──────
+// ────── Delete (per-user Bunny creds) ──────
 app.delete('/file', (req, res) => {
   if (!checkSecret(req, res)) return;
+  const creds = readBunnyCreds(req, res);
+  if (!creds) return;
 
   const folder = sanitizeFolder(req.query.folder);
   const name = sanitizeName(req.query.name);
@@ -179,11 +184,11 @@ app.delete('/file', (req, res) => {
     return res.status(400).json({ ok: false, error: 'Missing "name" query param' });
   }
   const objectPath = `${folder}${name}`;
-  const bunnyUrl = `https://${BUNNY_STORAGE_HOST}/${BUNNY_STORAGE_ZONE}/${objectPath}`;
+  const bunnyUrl = `https://${creds.host}/${creds.zone}/${objectPath}`;
 
   const r = https.request(
     bunnyUrl,
-    { method: 'DELETE', headers: { AccessKey: BUNNY_ACCESS_KEY } },
+    { method: 'DELETE', headers: { AccessKey: creds.key } },
     (proxyRes) => {
       const status = proxyRes.statusCode || 0;
       let body = '';
@@ -203,6 +208,6 @@ app.delete('/file', (req, res) => {
 
 app.listen(Number(PORT), () => {
   console.log(
-    `[records-by-grevo-proxy] listening on :${PORT} → ${BUNNY_STORAGE_HOST}/${BUNNY_STORAGE_ZONE}`
+    `[records-by-grevo-proxy] listening on :${PORT} (multi-tenant mode)`
   );
 });
