@@ -9,6 +9,7 @@ import {
   Pause,
   Keyboard,
   Gauge,
+  Sparkles,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatDuration } from '../lib/format';
@@ -16,6 +17,7 @@ import { saveRecording } from '../lib/storage';
 import { composeSegments, computeKeptSegments, type Segment } from '../lib/compose';
 import { useThumbnails } from '../hooks/useThumbnails';
 import { useWaveform } from '../hooks/useWaveform';
+import { detectSilentRanges } from '../lib/silence';
 
 interface Props {
   recording: StoredRecording;
@@ -216,6 +218,31 @@ export function TrimEditor({
 
   const removeDelete = (id: string) => {
     setDeletes((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const detectAndAddSilentCuts = () => {
+    if (peaks.length === 0 || duration <= 0) {
+      alert('Audio se ještě nenačetl. Zkus to za vteřinu.');
+      return;
+    }
+    const ranges = detectSilentRanges(peaks, duration, {
+      threshold: 0.07,
+      minDurationSec: 0.6,
+      padStart: 0.15,
+      padEnd: 0.15,
+    });
+    if (ranges.length === 0) {
+      alert('V nahrávce jsem nenašel žádné delší pauzy.');
+      return;
+    }
+    const newDeletes: DeleteRegion[] = ranges
+      .map((r) => ({
+        id: genId(),
+        start: Math.max(trimStart, r.start),
+        end: Math.min(trimEnd, r.end),
+      }))
+      .filter((d) => d.end - d.start > 0.2);
+    setDeletes((prev) => [...prev, ...newDeletes]);
   };
 
   const removeLastDeleteOrCutOnPlayhead = () => {
@@ -585,7 +612,7 @@ export function TrimEditor({
       </div>
 
       <div className="flex items-center justify-between gap-2 mt-5 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => addCutAtPlayhead()}
             disabled={exporting}
@@ -596,6 +623,14 @@ export function TrimEditor({
             {deletes.length > 0 && (
               <span className="ml-1 text-text-muted">({deletes.length})</span>
             )}
+          </button>
+          <button
+            onClick={detectAndAddSilentCuts}
+            disabled={exporting || peaks.length === 0}
+            className="btn-secondary"
+            title="Najít delší pauzy a navrhnout je k odstranění"
+          >
+            <Sparkles className="w-4 h-4 text-accent" /> Najít ticho
           </button>
           {deletes.length > 0 && (
             <button
