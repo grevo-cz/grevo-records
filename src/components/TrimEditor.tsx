@@ -11,6 +11,8 @@ interface Props {
   duration: number;
   onDone: (rec: StoredRecording) => void;
   onCancel: () => void;
+  /** When true, the editor is rendered as a persistent panel (no Cancel button). */
+  persistent?: boolean;
 }
 
 type DragHandle =
@@ -38,6 +40,7 @@ export function TrimEditor({
   duration,
   onDone,
   onCancel,
+  persistent = false,
 }: Props) {
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(duration);
@@ -381,15 +384,22 @@ export function TrimEditor({
             <span>Exportuji… {Math.round(progressPct)}%</span>
           </div>
         )}
-        <button onClick={onCancel} disabled={exporting} className="btn-secondary">
-          <X className="w-4 h-4" /> Zrušit
-        </button>
+        {!persistent && (
+          <button onClick={onCancel} disabled={exporting} className="btn-secondary">
+            <X className="w-4 h-4" /> Zrušit
+          </button>
+        )}
         <button
           onClick={handleConfirm}
-          disabled={exporting || keptDuration < 0.2}
+          disabled={exporting || keptDuration < 0.2 || keptDuration >= duration - 0.05}
           className="btn-primary"
+          title={
+            keptDuration >= duration - 0.05
+              ? 'Není co stříhat — pohni úchyty nebo přidej výřez'
+              : 'Uložit jako novou nahrávku'
+          }
         >
-          <Check className="w-4 h-4" /> Uložit střih
+          <Check className="w-4 h-4" /> Uložit střih jako novou
         </button>
       </div>
     </div>

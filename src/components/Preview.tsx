@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  Scissors,
   Plus,
   Download,
   Trash2,
   Check,
   X,
+  Scissors,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
@@ -28,8 +28,8 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(recording.name);
   const [duration, setDuration] = useState(recording.durationMs / 1000 || 0);
-  const [trimming, setTrimming] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -38,6 +38,7 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
     setName(recording.name);
     setDuration(recording.durationMs / 1000 || 0);
     setPlaybackError(null);
+    setVideoReady(false);
     return () => URL.revokeObjectURL(u);
   }, [recording.blob, recording.name, recording.durationMs]);
 
@@ -64,8 +65,8 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
   };
 
   return (
-    <div className="min-h-full p-10 max-w-6xl mx-auto animate-fade-in">
-      <header className="flex items-center justify-between gap-4 mb-6 pt-4">
+    <div className="min-h-full p-8 max-w-6xl mx-auto animate-fade-in">
+      <header className="flex items-center justify-between gap-4 mb-5 pt-2">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button onClick={onBack} className="btn-ghost p-2">
             <ArrowLeft className="w-5 h-5" />
@@ -115,11 +116,41 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={onNew} className="btn-secondary">
+          <UploadButton recording={recording} variant="secondary" onUploaded={onUpdated} />
+          <button onClick={handleDownload} className="btn-secondary">
+            <Download className="w-4 h-4" /> Stáhnout
+          </button>
+          <button onClick={onNew} className="btn-ghost">
             <Plus className="w-4 h-4" /> Nové
+          </button>
+          <button onClick={handleDelete} className="btn-ghost text-danger">
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </header>
+
+      {/* Trim editor — always visible on top of the player */}
+      {videoReady && duration > 0 && videoRef.current && (
+        <div className="mb-4 animate-fade-in">
+          <div className="flex items-center gap-2 mb-2 text-text-secondary text-sm">
+            <Scissors className="w-4 h-4 text-accent" />
+            <span className="font-medium text-text-primary">Střih</span>
+            <span className="text-text-muted">
+              · drag krajní úchyty pro ořez začátku/konce, „Vyříznout úsek" pro řez uprostřed
+            </span>
+          </div>
+          <TrimEditor
+            recording={recording}
+            videoEl={videoRef.current}
+            duration={duration}
+            onDone={(rec) => onUpdated(rec)}
+            onCancel={() => {
+              /* no-op: trim editor is persistent */
+            }}
+            persistent
+          />
+        </div>
+      )}
 
       <div className="card overflow-hidden bg-black relative">
         {url && (
@@ -132,6 +163,7 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
               const d = e.currentTarget.duration;
               if (isFinite(d) && d > 0) setDuration(d);
               setPlaybackError(null);
+              setVideoReady(true);
             }}
             onError={() => {
               setPlaybackError(
@@ -152,43 +184,6 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
           </div>
         )}
       </div>
-
-      {trimming && duration > 0 && videoRef.current ? (
-        <TrimEditor
-          recording={recording}
-          videoEl={videoRef.current}
-          duration={duration}
-          onDone={(rec) => {
-            onUpdated(rec);
-            setTrimming(false);
-          }}
-          onCancel={() => setTrimming(false)}
-        />
-      ) : (
-        <div className="flex flex-col gap-3 mt-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setTrimming(true)}
-              disabled={!duration}
-              className="btn-primary"
-            >
-              <Scissors className="w-4 h-4" /> Střih
-            </button>
-            <UploadButton
-              recording={recording}
-              variant="secondary"
-              onUploaded={onUpdated}
-            />
-            <button onClick={handleDownload} className="btn-secondary">
-              <Download className="w-4 h-4" /> Stáhnout soubor
-            </button>
-            <div className="flex-1" />
-            <button onClick={handleDelete} className="btn-danger">
-              <Trash2 className="w-4 h-4" /> Smazat
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

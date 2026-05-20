@@ -23,11 +23,17 @@ export const DEFAULT_BUNNY: BunnySettings = {
   autoUpload: false,
 };
 
-const KEY = 'vr-bunny-settings-v4';
+import { userScopeKey } from './auth';
+
+const BASE_KEY = 'vr-bunny-settings-v4';
+
+function key(): string {
+  return userScopeKey(BASE_KEY);
+}
 
 export function loadBunnySettings(): BunnySettings {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(key());
     if (!raw) return DEFAULT_BUNNY;
     return { ...DEFAULT_BUNNY, ...JSON.parse(raw) };
   } catch {
@@ -36,7 +42,7 @@ export function loadBunnySettings(): BunnySettings {
 }
 
 export function saveBunnySettings(s: BunnySettings) {
-  localStorage.setItem(KEY, JSON.stringify(s));
+  localStorage.setItem(key(), JSON.stringify(s));
 }
 
 export function isBunnyConfigured(s: BunnySettings = loadBunnySettings()): boolean {
