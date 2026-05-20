@@ -1,4 +1,5 @@
 import { loadBunnySettings } from './settings';
+import { PROXY_URL, UPLOAD_SECRET } from './proxy-config';
 
 export interface UploadResult {
   url: string;
@@ -9,7 +10,8 @@ export type UploadProgress = (loaded: number, total: number, pct: number) => voi
 
 /**
  * Uploads a recording blob to the team upload proxy.
- * Bunny credentials are sent as headers — each user supplies their own zone.
+ * Proxy URL + upload secret come from build-time constants;
+ * Bunny credentials are per-user from Settings and sent as headers.
  */
 export function uploadToBunny(
   blob: Blob,
@@ -20,13 +22,11 @@ export function uploadToBunny(
   if (!s.enabled) {
     return Promise.reject(new Error('Bunny upload je vypnutý v Settings.'));
   }
-  if (!s.proxyUrl) return Promise.reject(new Error('Chybí Proxy URL.'));
-  if (!s.uploadSecret) return Promise.reject(new Error('Chybí Upload Secret.'));
   if (!s.storageZone) return Promise.reject(new Error('Chybí Storage Zone Name.'));
   if (!s.accessKey) return Promise.reject(new Error('Chybí Bunny Access Key.'));
   if (!s.pullZoneUrl) return Promise.reject(new Error('Chybí Pull Zone URL.'));
 
-  const base = s.proxyUrl.replace(/\/+$/, '');
+  const base = PROXY_URL.replace(/\/+$/, '');
   const url =
     `${base}/upload?name=${encodeURIComponent(filename)}` +
     `&folder=${encodeURIComponent(s.folder)}`;
@@ -34,7 +34,7 @@ export function uploadToBunny(
   return new Promise<UploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
-    xhr.setRequestHeader('x-upload-secret', s.uploadSecret);
+    xhr.setRequestHeader('x-upload-secret', UPLOAD_SECRET);
     xhr.setRequestHeader('x-bunny-zone', s.storageZone);
     xhr.setRequestHeader('x-bunny-host', s.storageHost || 'storage.bunnycdn.com');
     xhr.setRequestHeader('x-bunny-key', s.accessKey);

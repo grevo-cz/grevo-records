@@ -1,9 +1,5 @@
 export interface BunnySettings {
   enabled: boolean;
-  /** Shared upload proxy URL (same for whole team). */
-  proxyUrl: string;
-  /** Shared secret (same for whole team) — authenticates against the proxy. */
-  uploadSecret: string;
   /** This user's Bunny Storage Zone Name. */
   storageZone: string;
   /** Storage hostname based on region. */
@@ -19,8 +15,6 @@ export interface BunnySettings {
 
 export const DEFAULT_BUNNY: BunnySettings = {
   enabled: false,
-  proxyUrl: '',
-  uploadSecret: '',
   storageZone: '',
   storageHost: 'storage.bunnycdn.com',
   accessKey: '',
@@ -29,7 +23,7 @@ export const DEFAULT_BUNNY: BunnySettings = {
   autoUpload: false,
 };
 
-const KEY = 'vr-bunny-settings-v3';
+const KEY = 'vr-bunny-settings-v4';
 
 export function loadBunnySettings(): BunnySettings {
   try {
@@ -46,12 +40,5 @@ export function saveBunnySettings(s: BunnySettings) {
 }
 
 export function isBunnyConfigured(s: BunnySettings = loadBunnySettings()): boolean {
-  return (
-    s.enabled &&
-    !!s.proxyUrl &&
-    !!s.uploadSecret &&
-    !!s.storageZone &&
-    !!s.accessKey &&
-    !!s.pullZoneUrl
-  );
+  return s.enabled && !!s.storageZone && !!s.accessKey && !!s.pullZoneUrl;
 }
