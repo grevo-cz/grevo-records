@@ -5,6 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-ffmpeg.cjs",
+    "prebuild": "node scripts/copy-ffmpeg.cjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -21,6 +23,7 @@
     "vite": "^5.0.10"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "lucide-react": "^0.344.0",

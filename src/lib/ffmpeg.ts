@@ -1,36 +1,42 @@
 // Lazy-loaded ffmpeg.wasm for in-browser WebM → MP4 conversion.
-// Uses single-thread variant (no SharedArrayBuffer, no COOP/COEP headers).
-// Core files are fetched from unpkg the first time and cached by the browser.
+// Core files are bundled in public/ffmpeg/ (self-hosted) — no unpkg/CORS issues.
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchFile } from '@ffmpeg/util';
 
 let instance: FFmpeg | null = null;
 let loading: Promise<FFmpeg> | null = null;
 
-const CORE_VERSION = '0.12.6';
-const CORE_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
-
-export type ConvertProgress = (pct: number, stage: 'loading' | 'converting') => void;
+export type ConvertProgress = (
+  pct: number,
+  stage: 'loading' | 'converting'
+) => void;
 
 async function getFFmpeg(onProgress?: ConvertProgress): Promise<FFmpeg> {
   if (instance) return instance;
   if (loading) return loading;
 
   loading = (async () => {
-    onProgress?.(0, 'loading');
-    const ffmpeg = new FFmpeg();
-    ffmpeg.on('log', () => {
-      /* swallow ffmpeg logs */
-    });
-    const coreURL = await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript');
-    onProgress?.(50, 'loading');
-    const wasmURL = await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm');
-    onProgress?.(90, 'loading');
-    await ffmpeg.load({ coreURL, wasmURL });
-    onProgress?.(100, 'loading');
-    instance = ffmpeg;
-    return ffmpeg;
+    try {
+      onProgress?.(0, 'loading');
+      const ffmpeg = new FFmpeg();
+      // Optional: capture logs for debugging.
+      ffmpeg.on('log', () => {});
+      onProgress?.(30, 'loading');
+      await ffmpeg.load({
+        coreURL: new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString(),
+        wasmURL: new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString(),
+      });
+      onProgress?.(100, 'loading');
+      instance = ffmpeg;
+      return ffmpeg;
+    } catch (err) {
+      loading = null; // allow retry on next call
+      throw new Error(
+        'ffmpeg.wasm se nepodařilo načíst: ' +
+          (err instanceof Error ? err.message : String(err) || 'unknown')
+      );
+    }
   })();
   return loading;
 }
@@ -41,7 +47,7 @@ export function isFFmpegReady(): boolean {
 
 /**
  * Converts a WebM blob to MP4 (H.264 + AAC) entirely in the browser.
- * Approx. 0.5–3x video length on Apple Silicon (slower on older CPUs).
+ * Approx. 0.5–3x video length on Apple Silicon.
  */
 export async function convertToMp4(
   source: Blob,
@@ -50,7 +56,12 @@ export async function convertToMp4(
   const ffmpeg = await getFFmpeg(onProgress);
 
   const handleProgress = (event: { progress: number }) => {
-    if (onProgress) onProgress(Math.min(99, Math.max(0, event.progress * 100)), 'converting');
+    if (onProgress) {
+      onProgress(
+        Math.min(99, Math.max(0, event.progress * 100)),
+        'converting'
+      );
+    }
   };
   ffmpeg.on('progress', handleProgress);
 
@@ -59,7 +70,7 @@ export async function convertToMp4(
 
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(source));
-    await ffmpeg.exec([
+    const ret = await ffmpeg.exec([
       '-i',
       inputName,
       '-c:v',
@@ -78,12 +89,18 @@ export async function convertToMp4(
       '+faststart',
       outputName,
     ]);
+    if (ret !== 0) throw new Error(`ffmpeg exec returned ${ret}`);
+
     const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
-    // Copy into a fresh ArrayBuffer to avoid SharedArrayBuffer type mismatches.
     const bytes = new Uint8Array(data.byteLength);
     bytes.set(data);
     onProgress?.(100, 'converting');
     return new Blob([bytes], { type: 'video/mp4' });
+  } catch (err) {
+    throw new Error(
+      'Konverze ffmpeg selhala: ' +
+        (err instanceof Error ? err.message : String(err) || 'unknown')
+    );
   } finally {
     ffmpeg.off('progress', handleProgress);
     try {

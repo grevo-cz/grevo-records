@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pause, Play, Square, X, Loader2 } from 'lucide-react';
 import { useRecorder } from '../hooks/useRecorder';
-import { ScreenPreview } from './ScreenPreview';
+import { LivePreview } from './LivePreview';
 import { formatDuration } from '../lib/format';
 import { saveRecording, setUploadedUrl } from '../lib/storage';
 import { convertToMp4 } from '../lib/ffmpeg';
@@ -66,7 +66,6 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       return;
     }
     try {
-      // Convert WebM → MP4 (browser-side via ffmpeg.wasm)
       const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
         if (stageName === 'loading') {
           setStage({ kind: 'loading-ffmpeg', pct });
@@ -82,7 +81,6 @@ export function RecordingView({ onFinish, onCancel }: Props) {
         mimeType: 'video/mp4',
       });
 
-      // Auto-upload if configured
       const settings = loadBunnySettings();
       if (settings.autoUpload && isBunnyConfigured(settings)) {
         try {
@@ -104,6 +102,12 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       onFinish(rec);
     } catch (e) {
       console.error('Conversion failed, saving original:', e);
+      const reason =
+        e instanceof Error && e.message
+          ? e.message
+          : typeof e === 'string'
+          ? e
+          : 'neznámá chyba (zkus refresh)';
       try {
         const ext = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
         const rec = await saveRecording({
@@ -113,8 +117,10 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           mimeType: result.mimeType,
         });
         alert(
-          'Konverze do MP4 selhala, uložil jsem původní záznam. Důvod: ' +
-            (e as Error).message
+          'Konverze do MP4 selhala, uložil jsem původní záznam (' +
+            ext.toUpperCase() +
+            ').\n\nDůvod: ' +
+            reason
         );
         onFinish(rec);
       } catch (saveErr) {
@@ -137,103 +143,107 @@ export function RecordingView({ onFinish, onCancel }: Props) {
 
   return (
     <div className="relative w-full h-full">
+      {/* Full-bleed live preview behind everything */}
       {recorder.displayStream && !isSaving && (
-        <ScreenPreview
+        <LivePreview
           stream={recorder.displayStream}
           cameraStream={recorder.cameraStream}
         />
       )}
 
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8 pointer-events-none">
-        {recorder.state === 'preparing' && (
-          <div className="text-text-secondary animate-fade-in">
-            <div className="text-xl font-medium">Vyber co sdílet…</div>
-            <div className="text-sm mt-2">
-              Prohlížeč ti právě ukazuje dialog pro výběr obrazovky nebo okna.
-            </div>
-          </div>
-        )}
-        {recorder.state === 'countdown' && (
-          <div className="animate-fade-in">
-            <div className="text-text-secondary uppercase text-xs tracking-widest mb-3">
-              Začínám za
-            </div>
-            <div
-              key={recorder.countdownRemaining}
-              className="text-[10rem] font-semibold text-accent leading-none animate-fade-in tabular-nums"
-            >
-              {recorder.countdownRemaining}
-            </div>
-            <p className="text-text-secondary text-sm mt-6 max-w-md mx-auto">
-              Připrav se. Můžeš se přepnout na sdílené okno.
-            </p>
-          </div>
-        )}
-        {isLive && !isSaving && (
-          <div className="animate-fade-in">
-            <div className="flex items-center justify-center gap-3 mb-3">
-              <span
-                className={`w-3 h-3 rounded-full ${
-                  recorder.state === 'recording'
-                    ? 'bg-danger animate-pulse-soft'
-                    : 'bg-amber-400'
-                }`}
-              />
-              <span className="text-text-secondary uppercase text-xs tracking-widest">
-                {recorder.state === 'paused' ? 'Pauza' : 'Nahrává se'}
-              </span>
-            </div>
-            <div className="text-6xl font-mono tabular-nums tracking-tight">
+      {/* Top overlay: status pill */}
+      {isLive && !isSaving && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20 animate-fade-in">
+          <div className="flex items-center gap-3 bg-bg-card/85 backdrop-blur-xl border border-bg-border rounded-full px-5 py-2 shadow-2xl">
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                recorder.state === 'recording'
+                  ? 'bg-danger animate-pulse-soft'
+                  : 'bg-amber-400'
+              }`}
+            />
+            <span className="text-text-secondary uppercase text-[10px] tracking-widest font-medium">
+              {recorder.state === 'paused' ? 'Pauza' : 'Nahrává se'}
+            </span>
+            <div className="w-px h-4 bg-bg-border" />
+            <span className="font-mono text-base tabular-nums tracking-tight">
               {formatDuration(seconds)}
-            </div>
-            <p className="text-text-secondary text-sm mt-6 max-w-md mx-auto">
-              Nahrávání běží i když se přepneš na jinou aplikaci. Stop dáš
-              tlačítkem dole nebo přes „Stop sharing" v liště prohlížeče.
-            </p>
+            </span>
           </div>
-        )}
-        {isSaving && (
-          <div className="animate-fade-in max-w-md w-full">
-            <Loader2 className="w-10 h-10 text-accent animate-spin mx-auto mb-4" />
-            <div className="text-xl font-medium">
-              {stage.kind === 'loading-ffmpeg' && 'Připravuji konvertor…'}
-              {stage.kind === 'converting' && 'Konvertuji do MP4…'}
-              {stage.kind === 'saving' && 'Ukládám…'}
-              {stage.kind === 'uploading' && 'Nahrávám na Bunny…'}
-            </div>
-            {(stage.kind === 'loading-ffmpeg' ||
-              stage.kind === 'converting' ||
-              stage.kind === 'uploading') && (
-              <>
-                <div className="mt-4 w-full h-2 bg-bg-elev rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-accent transition-all"
-                    style={{ width: `${stage.pct}%` }}
-                  />
-                </div>
-                <div className="text-text-secondary text-sm mt-2 tabular-nums">
-                  {Math.round(stage.pct)}%
-                </div>
-              </>
-            )}
-            <p className="text-text-secondary text-xs mt-4">
-              {stage.kind === 'loading-ffmpeg'
-                ? 'První spuštění stáhne ~30 MB ffmpeg.wasm. Příště už bude okamžité.'
-                : stage.kind === 'converting'
-                ? 'Konverze běží lokálně v prohlížeči, nic se neposílá ven.'
-                : stage.kind === 'uploading'
-                ? 'Streamuji video přes upload proxy do Bunny Storage…'
-                : 'Ukládám do knihovny…'}
-            </p>
-          </div>
-        )}
-        {recorder.error && (
-          <div className="text-danger mt-6 max-w-md">{recorder.error}</div>
-        )}
-      </div>
+        </div>
+      )}
 
+      {/* Centered messages for prep / countdown / saving */}
+      {!isLive && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-8 pointer-events-none z-20">
+          {recorder.state === 'preparing' && (
+            <div className="text-text-secondary animate-fade-in">
+              <div className="text-xl font-medium">Vyber co sdílet…</div>
+              <div className="text-sm mt-2">
+                Prohlížeč ti právě ukazuje dialog pro výběr obrazovky nebo okna.
+              </div>
+            </div>
+          )}
+          {recorder.state === 'countdown' && (
+            <div className="animate-fade-in">
+              <div className="text-text-secondary uppercase text-xs tracking-widest mb-3">
+                Začínám za
+              </div>
+              <div
+                key={recorder.countdownRemaining}
+                className="text-[10rem] font-semibold text-accent leading-none animate-fade-in tabular-nums drop-shadow-2xl"
+              >
+                {recorder.countdownRemaining}
+              </div>
+              <p className="text-text-secondary text-sm mt-6 max-w-md mx-auto">
+                Připrav se. Můžeš se přepnout na sdílené okno.
+              </p>
+            </div>
+          )}
+          {isSaving && (
+            <div className="animate-fade-in max-w-md w-full">
+              <Loader2 className="w-10 h-10 text-accent animate-spin mx-auto mb-4" />
+              <div className="text-xl font-medium">
+                {stage.kind === 'loading-ffmpeg' && 'Připravuji konvertor…'}
+                {stage.kind === 'converting' && 'Konvertuji do MP4…'}
+                {stage.kind === 'saving' && 'Ukládám…'}
+                {stage.kind === 'uploading' && 'Nahrávám na Bunny…'}
+              </div>
+              {(stage.kind === 'loading-ffmpeg' ||
+                stage.kind === 'converting' ||
+                stage.kind === 'uploading') && (
+                <>
+                  <div className="mt-4 w-full h-2 bg-bg-elev rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-accent transition-all"
+                      style={{ width: `${stage.pct}%` }}
+                    />
+                  </div>
+                  <div className="text-text-secondary text-sm mt-2 tabular-nums">
+                    {Math.round(stage.pct)}%
+                  </div>
+                </>
+              )}
+              <p className="text-text-secondary text-xs mt-4">
+                {stage.kind === 'loading-ffmpeg'
+                  ? 'Načítám ffmpeg.wasm (~30 MB). Po prvním načtení cachuje prohlížeč.'
+                  : stage.kind === 'converting'
+                  ? 'Konverze běží lokálně v prohlížeči, nic se neposílá ven.'
+                  : stage.kind === 'uploading'
+                  ? 'Streamuji video přes upload proxy do Bunny Storage…'
+                  : 'Ukládám do knihovny…'}
+              </p>
+            </div>
+          )}
+          {recorder.error && (
+            <div className="text-danger mt-6 max-w-md">{recorder.error}</div>
+          )}
+        </div>
+      )}
+
+      {/* Floating control bar */}
       {!isSaving && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 animate-fade-in">
           <div className="flex items-center gap-2 bg-bg-card/95 backdrop-blur-xl border border-bg-border rounded-2xl px-3 py-2 shadow-2xl">
             <div className="flex items-center gap-2 px-3">
               <span
