@@ -1,0 +1,19 @@
+node_modules
+**/node_modules
+dist
+release
+.DS_Store
+*.log
+.vite
+
+# Env files — NEVER commit Bunny credentials
+.env
+.env.local
+.env.*.local
+server/.env
+server/.env.*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea

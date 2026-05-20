@@ -1,0 +1,18 @@
+{
+  "name": "records-by-grevo-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Upload proxy for Records By Grevo — streams uploads to Bunny.net Storage with the access key kept on the server.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
