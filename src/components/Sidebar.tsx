@@ -1,6 +1,7 @@
 import { Video, Library as LibraryIcon, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import type { View } from '../App';
 import type { Session } from '../lib/auth';
+import { BUILD_SHA } from '../lib/version';
 
 interface SidebarProps {
   view: View;
@@ -79,6 +80,12 @@ export function Sidebar({ view, session, onNavigate, onLogout }: SidebarProps) {
         >
           <LogOut className="w-5 h-5" />
         </button>
+        <div
+          className="text-[9px] text-text-muted font-mono mt-1"
+          title="Build version — ověř, že vidíš nejnovější deploy"
+        >
+          {BUILD_SHA}
+        </div>
       </nav>
     </aside>
   );
