@@ -15,6 +15,7 @@ import { formatDuration } from '../lib/format';
 import { saveRecording } from '../lib/storage';
 import { composeSegments, computeKeptSegments, type Segment } from '../lib/compose';
 import { useThumbnails } from '../hooks/useThumbnails';
+import { useWaveform } from '../hooks/useWaveform';
 
 interface Props {
   recording: StoredRecording;
@@ -70,6 +71,7 @@ export function TrimEditor({
   const justDraggedRef = useRef(false);
 
   const { thumbnails } = useThumbnails(recording.blob, 16, 56);
+  const { peaks } = useWaveform(recording.blob, 240);
 
   const kept = useMemo(
     () => computeKeptSegments(duration, trimStart, trimEnd, deletes),
@@ -462,11 +464,35 @@ export function TrimEditor({
             {thumbnails.map((src, i) => (
               <div
                 key={i}
-                className="flex-1 h-full bg-cover bg-center opacity-70"
+                className="flex-1 h-full bg-cover bg-center opacity-60"
                 style={{ backgroundImage: `url(${src})` }}
               />
             ))}
           </div>
+        )}
+
+        {/* Audio waveform — overlay over thumbnails */}
+        {peaks.length > 0 && (
+          <svg
+            className="absolute inset-x-0 bottom-0 w-full h-8 pointer-events-none"
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${peaks.length} 100`}
+          >
+            <g fill="rgba(124,108,255,0.65)">
+              {peaks.map((p, i) => {
+                const h = Math.max(2, p * 100);
+                return (
+                  <rect
+                    key={i}
+                    x={i}
+                    y={(100 - h) / 2 + 50 - h / 2}
+                    width={0.8}
+                    height={h}
+                  />
+                );
+              })}
+            </g>
+          </svg>
         )}
 
         {/* Outside-trim overlay */}
