@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Trash2, Video, Search, Download, Cloud } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
 import { listRecordings, deleteRecording, estimateStorage } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
+
+type FilterMode = 'all' | 'uploaded' | 'local';
+type SortMode = 'newest' | 'oldest' | 'size' | 'duration';
 
 interface Props {
   onOpen: (rec: StoredRecording) => void;
@@ -14,6 +17,8 @@ export function Library({ onOpen }: Props) {
   const [recordings, setRecordings] = useState<StoredRecording[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<FilterMode>('all');
+  const [sort, setSort] = useState<SortMode>('newest');
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
 
   const load = async () => {
@@ -28,9 +33,30 @@ export function Library({ onOpen }: Props) {
     load();
   }, []);
 
-  const filtered = recordings.filter((r) =>
-    r.name.toLowerCase().includes(query.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    let list = recordings.filter((r) =>
+      r.name.toLowerCase().includes(query.toLowerCase())
+    );
+    if (filter === 'uploaded') list = list.filter((r) => !!r.uploadedUrl);
+    else if (filter === 'local') list = list.filter((r) => !r.uploadedUrl);
+
+    list = [...list].sort((a, b) => {
+      switch (sort) {
+        case 'oldest':
+          return a.createdAt - b.createdAt;
+        case 'size':
+          return b.size - a.size;
+        case 'duration':
+          return b.durationMs - a.durationMs;
+        case 'newest':
+        default:
+          return b.createdAt - a.createdAt;
+      }
+    });
+    return list;
+  }, [recordings, query, filter, sort]);
+
+  const uploadedCount = recordings.filter((r) => !!r.uploadedUrl).length;
 
   const handleDelete = async (rec: StoredRecording, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -60,14 +86,48 @@ export function Library({ onOpen }: Props) {
         </div>
       </header>
 
-      <div className="relative mb-6">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Hledat nahrávku…"
-          className="input w-full pl-9"
-        />
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Hledat nahrávku…"
+            className="input w-full pl-9"
+          />
+        </div>
+
+        <div className="inline-flex bg-bg-elev rounded-lg p-1">
+          {([
+            ['all', `Vše · ${recordings.length}`],
+            ['uploaded', `Na Bunny · ${uploadedCount}`],
+            ['local', `Lokální · ${recordings.length - uploadedCount}`],
+          ] as [FilterMode, string][]).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setFilter(key)}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                filter === key
+                  ? 'bg-bg-card text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortMode)}
+          className="input"
+          style={{ width: 'auto' }}
+        >
+          <option value="newest">Nejnovější</option>
+          <option value="oldest">Nejstarší</option>
+          <option value="size">Největší</option>
+          <option value="duration">Nejdelší</option>
+        </select>
       </div>
 
       {loading ? (
