@@ -7,6 +7,7 @@ import { saveRecording, setUploadedUrl } from '../lib/storage';
 import { convertToMp4 } from '../lib/ffmpeg';
 import { loadBunnySettings, isBunnyConfigured } from '../lib/settings';
 import { uploadToBunny } from '../lib/upload';
+import { toast } from '../lib/toast';
 import type { StoredRecording } from '../types';
 
 interface Props {
@@ -92,9 +93,10 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           if (updated) rec = updated;
         } catch (uploadErr) {
           console.warn('Auto-upload failed:', uploadErr);
-          alert(
-            'Nahrávka uložena lokálně, ale auto-upload na Bunny selhal: ' +
-              (uploadErr as Error).message
+          toast.warning(
+            'Auto-upload na Bunny selhal — záznam je uložen lokálně. ' +
+              (uploadErr as Error).message,
+            { title: 'Upload', duration: 8000 }
           );
         }
       }
@@ -116,11 +118,9 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           durationMs: result.durationMs,
           mimeType: result.mimeType,
         });
-        alert(
-          'Konverze do MP4 selhala, uložil jsem původní záznam (' +
-            ext.toUpperCase() +
-            ').\n\nDůvod: ' +
-            reason
+        toast.warning(
+          `Konverze do MP4 selhala — uložil jsem ${ext.toUpperCase()}. ` + reason,
+          { title: 'MP4 konverze', duration: 9000 }
         );
         onFinish(rec);
       } catch (saveErr) {

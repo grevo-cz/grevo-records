@@ -18,6 +18,7 @@ import { composeSegments, computeKeptSegments, type Segment } from '../lib/compo
 import { useThumbnails } from '../hooks/useThumbnails';
 import { useWaveform } from '../hooks/useWaveform';
 import { detectSilentRanges } from '../lib/silence';
+import { toast } from '../lib/toast';
 
 interface Props {
   recording: StoredRecording;
@@ -222,7 +223,7 @@ export function TrimEditor({
 
   const detectAndAddSilentCuts = () => {
     if (peaks.length === 0 || duration <= 0) {
-      alert('Audio se ještě nenačetl. Zkus to za vteřinu.');
+      toast.info('Audio se ještě nenačetl. Zkus to za vteřinu.');
       return;
     }
     const ranges = detectSilentRanges(peaks, duration, {
@@ -232,7 +233,7 @@ export function TrimEditor({
       padEnd: 0.15,
     });
     if (ranges.length === 0) {
-      alert('V nahrávce jsem nenašel žádné delší pauzy.');
+      toast.info('V nahrávce nejsou žádné delší pauzy k odstranění.');
       return;
     }
     const newDeletes: DeleteRegion[] = ranges
@@ -243,6 +244,10 @@ export function TrimEditor({
       }))
       .filter((d) => d.end - d.start > 0.2);
     setDeletes((prev) => [...prev, ...newDeletes]);
+    const total = newDeletes.reduce((acc, d) => acc + (d.end - d.start), 0);
+    toast.success(
+      `Navrženo ${newDeletes.length} výřezů — uspoříš ${total.toFixed(1)}s.`
+    );
   };
 
   const removeLastDeleteOrCutOnPlayhead = () => {
@@ -369,7 +374,7 @@ export function TrimEditor({
 
   const handleConfirm = async () => {
     if (kept.length === 0) {
-      alert('Nezbyl žádný úsek k uložení.');
+      toast.error('Nezbyl žádný úsek k uložení.');
       return;
     }
     setExporting(true);
@@ -388,9 +393,12 @@ export function TrimEditor({
         durationMs: result.durationMs,
         mimeType: result.mimeType,
       });
+      toast.success('Střih uložen jako nová nahrávka.');
       onDone(rec);
     } catch (e) {
-      alert('Střih selhal: ' + (e as Error).message);
+      toast.error('Střih selhal: ' + (e as Error).message, {
+        title: 'Chyba',
+      });
       setExporting(false);
     }
   };

@@ -5,6 +5,7 @@ import { uploadToBunny } from '../lib/upload';
 import { setUploadedUrl } from '../lib/storage';
 import { isBunnyConfigured } from '../lib/settings';
 import { formatBytes } from '../lib/format';
+import { toast } from '../lib/toast';
 
 interface Props {
   recording: StoredRecording;
@@ -38,7 +39,9 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
   const handleUpload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!configured) {
-      alert('Nastav nejdřív Bunny upload v Settings.');
+      toast.warning('Nastav nejdřív Bunny upload v Settings.', {
+        title: 'Není nastaveno',
+      });
       return;
     }
     setState({ kind: 'uploading', loaded: 0, total: recording.size, pct: 0 });
@@ -50,18 +53,26 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       );
       const updated = await setUploadedUrl(recording.id, result.url);
       setState({ kind: 'success', url: result.url });
+      toast.success('Video je na Bunny CDN.', { title: 'Nahráno' });
       if (updated && onUploaded) onUploaded(updated);
     } catch (err) {
-      setState({ kind: 'error', message: (err as Error).message });
+      const message = (err as Error).message;
+      setState({ kind: 'error', message });
+      toast.error(message, { title: 'Upload selhal' });
     }
   };
 
   const copyLink = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (state.kind !== 'success') return;
-    await navigator.clipboard.writeText(state.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(state.url);
+      setCopied(true);
+      toast.success('Link zkopírován do schránky.');
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('Nepodařilo se zkopírovat. Zkus znovu.');
+    }
   };
 
   // ───── Compact (icon) variant for cards ─────
