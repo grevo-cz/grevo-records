@@ -60,6 +60,7 @@ export default function App() {
             <Home
               onStartRecording={() => setView('recording')}
               onOpenLibrary={() => setView('library')}
+              onOpenSettings={() => setView('settings')}
             />
           )}
           {view === 'recording' && (

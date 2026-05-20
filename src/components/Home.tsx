@@ -7,12 +7,16 @@ import {
   Play,
   Monitor,
   Timer,
+  Cloud,
+  AlertCircle,
 } from 'lucide-react';
 import { useDevices } from '../hooks/useDevices';
+import { isBunnyConfigured } from '../lib/settings';
 
 interface HomeProps {
   onStartRecording: () => void;
   onOpenLibrary: () => void;
+  onOpenSettings?: () => void;
 }
 
 const SETTINGS_KEY = 'vr-settings-v3';
@@ -38,7 +42,8 @@ function saveSettings(s: Persisted) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
 }
 
-export function Home({ onStartRecording }: HomeProps) {
+export function Home({ onStartRecording, onOpenSettings }: HomeProps) {
+  const bunnyOk = isBunnyConfigured();
   const { microphones, cameras } = useDevices();
   const persisted = loadSettings();
   const [micEnabled, setMicEnabled] = useState(persisted.micEnabled ?? true);
@@ -94,6 +99,27 @@ export function Home({ onStartRecording }: HomeProps) {
           výběr obrazovky.
         </p>
       </header>
+
+      {!bunnyOk && (
+        <div className="card border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3 animate-fade-in">
+          <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-sm">
+              Bunny upload není nastavený
+            </div>
+            <p className="text-xs text-text-secondary mt-1">
+              Pro sdílení nahrávek s klienty potřebuješ nastavit svoji Bunny
+              Storage. Bez toho fungují jen lokální nahrávky a stažení do
+              Downloads.
+            </p>
+          </div>
+          {onOpenSettings && (
+            <button onClick={onOpenSettings} className="btn-secondary shrink-0">
+              <Cloud className="w-4 h-4" /> Nastavit
+            </button>
+          )}
+        </div>
+      )}
 
       <section className="card p-5">
         <div className="flex items-center gap-3 mb-1">
