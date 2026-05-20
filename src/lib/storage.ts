@@ -1,7 +1,9 @@
 // IndexedDB persistent storage for recordings.
 // Each recording is one row: id, name, createdAt, size, mimeType, durationMs, blob.
+// Recordings are filtered by ownerEmail so each logged-in user sees only their own.
 
 import type { StoredRecording } from '../types';
+import { currentSession } from './auth';
 
 const DB_NAME = 'video-recorder';
 const DB_VERSION = 1;
@@ -42,6 +44,7 @@ export async function saveRecording(input: {
   durationMs: number;
   mimeType: string;
 }): Promise<StoredRecording> {
+  const session = currentSession();
   const rec: StoredRecording = {
     id: genId(),
     name: input.name,
@@ -50,6 +53,7 @@ export async function saveRecording(input: {
     mimeType: input.mimeType,
     durationMs: input.durationMs,
     blob: input.blob,
+    ownerEmail: session?.email,
   };
   const store = await tx('readwrite');
   await req(store.add(rec));
@@ -57,9 +61,17 @@ export async function saveRecording(input: {
 }
 
 export async function listRecordings(): Promise<StoredRecording[]> {
+  const session = currentSession();
+  const email = session?.email;
   const store = await tx('readonly');
   const all = await req<StoredRecording[]>(store.getAll());
-  return all.sort((a, b) => b.createdAt - a.createdAt);
+  return all
+    .filter((r) => {
+      // Legacy recordings without ownerEmail are visible to everyone (one-time grace).
+      if (!r.ownerEmail) return true;
+      return r.ownerEmail === email;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function getRecording(id: string): Promise<StoredRecording | null> {

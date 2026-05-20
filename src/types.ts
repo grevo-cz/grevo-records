@@ -11,6 +11,8 @@ export interface StoredRecording {
   mimeType: string;
   durationMs: number;
   blob: Blob;
+  /** Email of the user who created this recording. Used to scope library per user. */
+  ownerEmail?: string;
   /** CDN URL set after a successful Bunny upload. */
   uploadedUrl?: string;
   uploadedAt?: number;
