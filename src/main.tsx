@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { Toaster } from './components/Toaster';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ConfirmRoot } from './components/ConfirmRoot';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -10,6 +11,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <App />
       <Toaster />
+      <ConfirmRoot />
     </ErrorBoundary>
   </React.StrictMode>
 );

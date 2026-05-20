@@ -14,6 +14,7 @@ import { TrimEditor } from './TrimEditor';
 import { deleteRecording, renameRecording } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
+import { confirmDialog } from '../lib/confirm';
 
 interface Props {
   recording: StoredRecording;
@@ -55,7 +56,13 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Smazat ${recording.name}?`)) return;
+    const ok = await confirmDialog({
+      title: 'Smazat nahrávku?',
+      message: `${recording.name} bude trvale odstraněna z lokální knihovny. Pokud je na Bunny, soubor v cloudu zůstane.`,
+      confirmLabel: 'Smazat',
+      danger: true,
+    });
+    if (!ok) return;
     await deleteRecording(recording.id);
     onDeleted();
   };

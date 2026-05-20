@@ -5,6 +5,7 @@ import { formatBytes, formatDate, formatDuration } from '../lib/format';
 import { listRecordings, deleteRecording, estimateStorage } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
+import { confirmDialog } from '../lib/confirm';
 
 type FilterMode = 'all' | 'uploaded' | 'local';
 type SortMode = 'newest' | 'oldest' | 'size' | 'duration';
@@ -60,7 +61,13 @@ export function Library({ onOpen }: Props) {
 
   const handleDelete = async (rec: StoredRecording, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Smazat ${rec.name}?`)) return;
+    const ok = await confirmDialog({
+      title: 'Smazat nahrávku?',
+      message: `${rec.name} bude trvale odstraněna z lokální knihovny. Pokud je na Bunny, soubor v cloudu zůstane.`,
+      confirmLabel: 'Smazat',
+      danger: true,
+    });
+    if (!ok) return;
     await deleteRecording(rec.id);
     load();
   };
