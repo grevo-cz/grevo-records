@@ -1,11 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Trash2, Video, Search, Download, Cloud } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Trash2,
+  Video,
+  Search,
+  Download,
+  Cloud,
+  CheckSquare,
+  Square,
+  X,
+} from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
 import { listRecordings, deleteRecording, estimateStorage } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
 import { confirmDialog } from '../lib/confirm';
+import { toast } from '../lib/toast';
 
 type FilterMode = 'all' | 'uploaded' | 'local';
 type SortMode = 'newest' | 'oldest' | 'size' | 'duration';
@@ -21,6 +31,7 @@ export function Library({ onOpen }: Props) {
   const [filter, setFilter] = useState<FilterMode>('all');
   const [sort, setSort] = useState<SortMode>('newest');
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const load = async () => {
     setLoading(true);
@@ -58,6 +69,22 @@ export function Library({ onOpen }: Props) {
   }, [recordings, query, filter, sort]);
 
   const uploadedCount = recordings.filter((r) => !!r.uploadedUrl).length;
+  const selectionMode = selected.size > 0;
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(filtered.map((r) => r.id)));
+  };
+
+  const clearSelection = () => setSelected(new Set());
 
   const handleDelete = async (rec: StoredRecording, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -69,12 +96,54 @@ export function Library({ onOpen }: Props) {
     });
     if (!ok) return;
     await deleteRecording(rec.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(rec.id);
+      return next;
+    });
     load();
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const ok = await confirmDialog({
+      title: `Smazat ${ids.length} nahrávek?`,
+      message: 'Všechny vybrané budou trvale odstraněny z lokální knihovny.',
+      confirmLabel: `Smazat ${ids.length}`,
+      danger: true,
+    });
+    if (!ok) return;
+    for (const id of ids) {
+      await deleteRecording(id);
+    }
+    clearSelection();
+    load();
+    toast.success(`Smazáno ${ids.length} nahrávek.`);
+  };
+
+  const handleBulkDownload = async () => {
+    const items = recordings.filter((r) => selected.has(r.id));
+    for (const rec of items) {
+      downloadBlob(rec.blob, rec.name);
+      // Stagger to avoid browser blocking multiple downloads
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    toast.success(`Stahuje se ${items.length} souborů.`);
   };
 
   const handleDownload = (rec: StoredRecording, e: React.MouseEvent) => {
     e.stopPropagation();
     downloadBlob(rec.blob, rec.name);
+  };
+
+  const handleCardClick = (rec: StoredRecording, e: React.MouseEvent) => {
+    if (selectionMode) {
+      e.stopPropagation();
+      toggleSelected(rec.id);
+    } else {
+      onOpen(rec);
+    }
   };
 
   return (
@@ -137,8 +206,34 @@ export function Library({ onOpen }: Props) {
         </select>
       </div>
 
+      {/* Bulk action bar — only when something is selected */}
+      {selectionMode && (
+        <div className="flex items-center justify-between gap-2 mb-4 bg-accent-subtle border border-accent/30 rounded-xl p-3 animate-fade-in">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="font-medium">{selected.size} vybráno</span>
+            <button
+              onClick={selectAll}
+              className="text-xs text-accent hover:underline"
+            >
+              Vybrat všechny v zobrazení ({filtered.length})
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleBulkDownload} className="btn-secondary text-xs">
+              <Download className="w-3.5 h-3.5" /> Stáhnout
+            </button>
+            <button onClick={handleBulkDelete} className="btn-danger text-xs">
+              <Trash2 className="w-3.5 h-3.5" /> Smazat
+            </button>
+            <button onClick={clearSelection} className="btn-ghost p-1.5">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
-        <div className="text-text-secondary py-20 text-center">Načítám…</div>
+        <LibrarySkeleton />
       ) : filtered.length === 0 ? (
         <div className="py-20 text-center">
           <Video className="w-12 h-12 text-text-muted mx-auto mb-3" />
@@ -154,7 +249,13 @@ export function Library({ onOpen }: Props) {
             <RecordingCard
               key={rec.id}
               rec={rec}
-              onOpen={() => onOpen(rec)}
+              selected={selected.has(rec.id)}
+              selectionMode={selectionMode}
+              onClick={(e) => handleCardClick(rec, e)}
+              onToggleSelect={(e) => {
+                e.stopPropagation();
+                toggleSelected(rec.id);
+              }}
               onDelete={(e) => handleDelete(rec, e)}
               onDownload={(e) => handleDownload(rec, e)}
               onChanged={load}
@@ -166,40 +267,108 @@ export function Library({ onOpen }: Props) {
   );
 }
 
+function LibrarySkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="card overflow-hidden animate-pulse">
+          <div className="aspect-video bg-bg-elev" />
+          <div className="p-4 space-y-2">
+            <div className="h-4 bg-bg-elev rounded w-3/4" />
+            <div className="h-3 bg-bg-elev rounded w-1/2" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RecordingCard({
   rec,
-  onOpen,
+  selected,
+  selectionMode,
+  onClick,
+  onToggleSelect,
   onDelete,
   onDownload,
   onChanged,
 }: {
   rec: StoredRecording;
-  onOpen: () => void;
+  selected: boolean;
+  selectionMode: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  onToggleSelect: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
   onDownload: (e: React.MouseEvent) => void;
   onChanged: () => void;
 }) {
   const [url, setUrl] = useState<string>('');
+  const [hovering, setHovering] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   useEffect(() => {
     const u = URL.createObjectURL(rec.blob);
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [rec.blob]);
 
+  // Hover-to-play: when card is hovered, start playback muted from beginning;
+  // when leaving, pause & reset.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (hovering) {
+      v.currentTime = 0;
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+      try {
+        v.currentTime = 0;
+      } catch {}
+    }
+  }, [hovering]);
+
   return (
-    <button
-      onClick={onOpen}
-      className="card text-left overflow-hidden group hover:border-accent transition-all"
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      className={`card text-left overflow-hidden group cursor-pointer transition-all ${
+        selected
+          ? 'border-accent ring-2 ring-accent/40'
+          : 'hover:border-accent'
+      }`}
     >
       <div className="aspect-video bg-black relative">
         {url && (
           <video
+            ref={videoRef}
             src={url}
             preload="metadata"
             className="w-full h-full object-cover"
             muted
+            playsInline
+            loop
           />
         )}
+
+        {/* Selection checkbox (always visible if selection mode active, on hover otherwise) */}
+        <button
+          onClick={onToggleSelect}
+          className={`absolute top-2 right-2 z-10 w-7 h-7 rounded-md bg-black/70 backdrop-blur flex items-center justify-center transition-opacity ${
+            selectionMode || selected
+              ? 'opacity-100'
+              : 'opacity-0 group-hover:opacity-100'
+          }`}
+          title={selected ? 'Odznačit' : 'Vybrat'}
+        >
+          {selected ? (
+            <CheckSquare className="w-4 h-4 text-accent" />
+          ) : (
+            <Square className="w-4 h-4 text-white/80" />
+          )}
+        </button>
+
         {rec.uploadedUrl && (
           <span
             className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-accent/90 text-white text-[10px] font-medium inline-flex items-center gap-1"
@@ -211,6 +380,11 @@ function RecordingCard({
         {rec.durationMs > 0 && (
           <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/70 text-xs font-mono">
             {formatDuration(rec.durationMs / 1000)}
+          </span>
+        )}
+        {hovering && (
+          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-accent/90 text-white text-[10px] font-medium animate-fade-in">
+            ▶ náhled
           </span>
         )}
       </div>
@@ -240,6 +414,6 @@ function RecordingCard({
           </span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
