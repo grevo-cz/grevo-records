@@ -4,12 +4,14 @@ import App from './App';
 import { Toaster } from './components/Toaster';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmRoot } from './components/ConfirmRoot';
+import { UpdateBanner } from './components/UpdateBanner';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <App />
+      <UpdateBanner />
       <Toaster />
       <ConfirmRoot />
     </ErrorBoundary>
