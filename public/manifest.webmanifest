@@ -1,0 +1,21 @@
+{
+  "name": "Records By Grevo",
+  "short_name": "Records",
+  "description": "Lokální screen recorder se střihem a sdílením přes Bunny CDN.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0a0b",
+  "theme_color": "#0a0a0b",
+  "lang": "cs",
+  "orientation": "any",
+  "categories": ["productivity", "utilities", "video"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
