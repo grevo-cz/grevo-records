@@ -68,13 +68,20 @@ export function computeKeptSegments(
   return kept;
 }
 
+export interface ComposeOptions {
+  /** Playback rate during export. 1 = normal, 1.5 = 50% faster, etc. Default 1. */
+  playbackRate?: number;
+}
+
 export async function composeSegments(
   source: Blob,
   segments: Segment[],
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  options: ComposeOptions = {}
 ): Promise<ComposeResult> {
   if (segments.length === 0) throw new Error('Nezbyly žádné úseky k uložení.');
 
+  const playbackRate = Math.max(0.25, Math.min(4, options.playbackRate ?? 1));
   const totalKept = segments.reduce((acc, s) => acc + (s.end - s.start), 0);
   if (totalKept < 0.1) throw new Error('Výsledný střih je příliš krátký.');
 
@@ -84,6 +91,10 @@ export async function composeSegments(
   video.playsInline = true;
   video.muted = false;
   video.preload = 'auto';
+  // Preserve pitch when changing playback rate (no chipmunk effect).
+  (video as any).preservesPitch = true;
+  (video as any).mozPreservesPitch = true;
+  (video as any).webkitPreservesPitch = true;
   // Must be in DOM for captureStream/MediaElementSource on some browsers
   video.style.position = 'fixed';
   video.style.left = '-9999px';
@@ -174,6 +185,8 @@ export async function composeSegments(
     for (const seg of segments) {
       // Seek to segment start
       await seekTo(video, seg.start);
+      // Apply playback rate (must be set after seek/before play for some browsers)
+      video.playbackRate = playbackRate;
       // Play through to end
       await video.play().catch(() => {});
       await new Promise<void>((resolve) => {
@@ -206,7 +219,7 @@ export async function composeSegments(
     return {
       blob: new Blob(chunks, { type: mimeType || 'video/webm' }),
       mimeType: mimeType || 'video/webm',
-      durationMs: totalKept * 1000,
+      durationMs: (totalKept / playbackRate) * 1000,
     };
   } finally {
     cleanup.forEach((fn) => {

@@ -49,7 +49,14 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       const result = await uploadToBunny(
         recording.blob,
         recording.name,
-        (loaded, total, pct) => setState({ kind: 'uploading', loaded, total, pct })
+        (loaded, total, pct) => setState({ kind: 'uploading', loaded, total, pct }),
+        {
+          onRetry: (attempt, reason) =>
+            toast.warning(
+              `Pokus ${attempt} selhal (${reason}). Zkouším znovu…`,
+              { title: 'Upload retry', duration: 4000 }
+            ),
+        }
       );
       const updated = await setUploadedUrl(recording.id, result.url);
       setState({ kind: 'success', url: result.url });

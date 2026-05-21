@@ -404,7 +404,8 @@ export function TrimEditor({
       const result = await composeSegments(
         recording.blob,
         kept as Segment[],
-        (p) => setProgressPct(p)
+        (p) => setProgressPct(p),
+        { playbackRate }
       );
       const base = recording.name.replace(/\.[^.]+$/, '');
       const ext = result.mimeType.includes('mp4') ? '.mp4' : '.webm';
@@ -430,7 +431,10 @@ export function TrimEditor({
   const phPct = (playhead / duration) * 100;
   const totalRemoved = duration - keptDuration;
   const hasChanges =
-    trimStart > 0.01 || trimEnd < duration - 0.01 || deletes.length > 0;
+    trimStart > 0.01 ||
+    trimEnd < duration - 0.01 ||
+    deletes.length > 0 ||
+    playbackRate !== 1;
 
   return (
     <div className="card p-5">
