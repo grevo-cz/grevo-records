@@ -16,6 +16,7 @@ import {
   type BunnySettings,
 } from '../lib/settings';
 import { PROXY_URL } from '../lib/proxy-config';
+import { toast } from '../lib/toast';
 
 const REGIONS: { value: string; label: string }[] = [
   { value: 'storage.bunnycdn.com', label: 'Falkenstein, DE (výchozí)' },
@@ -49,9 +50,28 @@ export function Settings() {
   }, []);
 
   const handleSave = () => {
-    saveBunnySettings(bunny);
-    setSavedFlash(true);
-    setTimeout(() => setSavedFlash(false), 1500);
+    // Validate when enabled — surface missing fields up front
+    if (bunny.enabled) {
+      const missing: string[] = [];
+      if (!bunny.storageZone.trim()) missing.push('Storage Zone Name');
+      if (!bunny.accessKey.trim()) missing.push('Access Key');
+      if (!bunny.pullZoneUrl.trim()) missing.push('Pull Zone URL');
+      if (missing.length > 0) {
+        toast.warning(`Bunny upload je zapnutý, ale chybí: ${missing.join(', ')}`, {
+          title: 'Doplň pole',
+        });
+        return;
+      }
+    }
+    try {
+      saveBunnySettings(bunny);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1500);
+    } catch (e) {
+      toast.error(
+        'Nepodařilo se uložit (možná plný localStorage): ' + (e as Error).message
+      );
+    }
   };
 
   const testConnection = async () => {
