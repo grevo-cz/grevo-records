@@ -52,7 +52,27 @@ export function RecordingView({ onFinish, onCancel }: Props) {
     }
     setStarted(true);
     const cfg = JSON.parse(raw) as StartConfig;
-    recorder.start(cfg).catch(() => {
+    recorder.start(cfg).catch((err) => {
+      const name = err?.name as string | undefined;
+      const message = err?.message as string | undefined;
+      // User explicitly dismissed the picker — silent return
+      if (name === 'NotAllowedError' || name === 'AbortError') {
+        onCancel();
+        return;
+      }
+      if (name === 'NotFoundError') {
+        toast.error('Nepodařilo se najít zdroj obrazu/zvuku.', { title: 'Nahrávání' });
+      } else if (name === 'NotReadableError') {
+        toast.error('Zařízení používá jiná aplikace. Zavři ji a zkus znovu.', {
+          title: 'Nahrávání',
+        });
+      } else if (name === 'OverconstrainedError') {
+        toast.error('Vybrané zařízení nepodporuje požadované nastavení.', {
+          title: 'Nahrávání',
+        });
+      } else if (message) {
+        toast.error(message, { title: 'Chyba nahrávání' });
+      }
       onCancel();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
