@@ -77,6 +77,13 @@ export function TrimEditor({
   const altDragRef = useRef<{ id: string; startSec: number } | null>(null);
   const [shiftHeld, setShiftHeld] = useState(false);
 
+  // Mirror high-frequency state (playhead) into a ref so the keyboard listener
+  // doesn't have to be re-attached every timeupdate.
+  const playheadRef = useRef(0);
+  useEffect(() => {
+    playheadRef.current = playhead;
+  }, [playhead]);
+
   const { thumbnails } = useThumbnails(recording.blob, 16, 56);
   const { peaks } = useWaveform(recording.blob, 240);
 
@@ -209,7 +216,7 @@ export function TrimEditor({
   }, [duration, trimStart, trimEnd, deletes, videoEl]);
 
   const addCutAtPlayhead = (anchorTime?: number) => {
-    const anchor = anchorTime ?? playhead;
+    const anchor = anchorTime ?? playheadRef.current;
     const span = Math.min(2, Math.max(0.4, (trimEnd - trimStart) / 10));
     let start = Math.max(trimStart, anchor - span / 2);
     let end = Math.min(trimEnd, anchor + span / 2);
@@ -256,7 +263,8 @@ export function TrimEditor({
 
   const removeLastDeleteOrCutOnPlayhead = () => {
     // If playhead is inside a delete region, remove it; otherwise remove last.
-    const inside = deletes.find((d) => playhead >= d.start && playhead <= d.end);
+    const ph = playheadRef.current;
+    const inside = deletes.find((d) => ph >= d.start && ph <= d.end);
     if (inside) {
       removeDelete(inside.id);
     } else if (deletes.length > 0) {
@@ -374,7 +382,7 @@ export function TrimEditor({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exporting, trimStart, trimEnd, deletes, videoEl, playhead]);
+  }, [exporting, trimStart, trimEnd, deletes, videoEl]);
 
   const handleTrackClick = (e: React.MouseEvent) => {
     if (justDraggedRef.current) return; // ignore click that completed a drag
