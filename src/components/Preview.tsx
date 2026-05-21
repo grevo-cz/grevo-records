@@ -15,6 +15,7 @@ import { deleteRecording, renameRecording } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
 import { confirmDialog } from '../lib/confirm';
+import { toast } from '../lib/toast';
 
 interface Props {
   recording: StoredRecording;
@@ -50,9 +51,13 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
       setName(recording.name);
       return;
     }
-    await renameRecording(recording.id, trimmed);
-    onUpdated({ ...recording, name: trimmed });
-    setRenaming(false);
+    try {
+      await renameRecording(recording.id, trimmed);
+      onUpdated({ ...recording, name: trimmed });
+      setRenaming(false);
+    } catch (e) {
+      toast.error('Přejmenování selhalo: ' + (e as Error).message);
+    }
   };
 
   const handleDelete = async () => {
@@ -63,8 +68,12 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
       danger: true,
     });
     if (!ok) return;
-    await deleteRecording(recording.id);
-    onDeleted();
+    try {
+      await deleteRecording(recording.id);
+      onDeleted();
+    } catch (e) {
+      toast.error('Smazání selhalo: ' + (e as Error).message);
+    }
   };
 
   const handleDownload = () => {

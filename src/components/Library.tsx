@@ -37,10 +37,15 @@ export function Library({ onOpen }: Props) {
 
   const load = async () => {
     setLoading(true);
-    const [list, est] = await Promise.all([listRecordings(), estimateStorage()]);
-    setRecordings(list);
-    setUsage(est);
-    setLoading(false);
+    try {
+      const [list, est] = await Promise.all([listRecordings(), estimateStorage()]);
+      setRecordings(list);
+      setUsage(est);
+    } catch (e) {
+      toast.error('Nepodařilo se načíst knihovnu: ' + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -97,13 +102,17 @@ export function Library({ onOpen }: Props) {
       danger: true,
     });
     if (!ok) return;
-    await deleteRecording(rec.id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.delete(rec.id);
-      return next;
-    });
-    load();
+    try {
+      await deleteRecording(rec.id);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(rec.id);
+        return next;
+      });
+      load();
+    } catch (e) {
+      toast.error('Smazání selhalo: ' + (e as Error).message);
+    }
   };
 
   const handleBulkDelete = async () => {
@@ -116,12 +125,23 @@ export function Library({ onOpen }: Props) {
       danger: true,
     });
     if (!ok) return;
+    let failed = 0;
     for (const id of ids) {
-      await deleteRecording(id);
+      try {
+        await deleteRecording(id);
+      } catch {
+        failed++;
+      }
     }
     clearSelection();
     load();
-    toast.success(`Smazáno ${ids.length} nahrávek.`);
+    if (failed === 0) {
+      toast.success(`Smazáno ${ids.length} nahrávek.`);
+    } else {
+      toast.warning(
+        `Smazáno ${ids.length - failed} z ${ids.length} (${failed} selhalo).`
+      );
+    }
   };
 
   const handleBulkDownload = async () => {
