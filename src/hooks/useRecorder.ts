@@ -92,6 +92,7 @@ export function useRecorder(): UseRecorderReturn {
   const pausedAtRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
+  const countdownResolveRef = useRef<(() => void) | null>(null);
   const resolveStopRef = useRef<((v: StopResult | null) => void) | null>(null);
   const mimeRef = useRef<string>('');
   const cancelledRef = useRef(false);
@@ -229,6 +230,7 @@ export function useRecorder(): UseRecorderReturn {
           setState('countdown');
           setCountdownRemaining(countdownSeconds);
           await new Promise<void>((resolve) => {
+            countdownResolveRef.current = resolve;
             let remaining = countdownSeconds;
             countdownTimerRef.current = window.setInterval(() => {
               remaining -= 1;
@@ -238,6 +240,7 @@ export function useRecorder(): UseRecorderReturn {
                   clearInterval(countdownTimerRef.current);
                   countdownTimerRef.current = null;
                 }
+                countdownResolveRef.current = null;
                 resolve();
               }
             }, 1000);
@@ -345,6 +348,11 @@ export function useRecorder(): UseRecorderReturn {
 
   const cancel = useCallback(() => {
     cancelledRef.current = true;
+    // Release any pending countdown await so the start() async chain unwinds.
+    if (countdownResolveRef.current) {
+      countdownResolveRef.current();
+      countdownResolveRef.current = null;
+    }
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') {
       chunksRef.current = [];
