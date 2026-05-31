@@ -1,8 +1,12 @@
 // Lazy-loaded ffmpeg.wasm for in-browser WebM → MP4 conversion.
-// Core files are bundled in public/ffmpeg/ (self-hosted) — no unpkg/CORS issues.
+// We try self-hosted files in /ffmpeg/ first, fall back to unpkg.
+// Both paths go through toBlobURL so the internal worker can importScripts().
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+
+const CORE_VERSION = '0.12.6';
+const UNPKG_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
 
 let instance: FFmpeg | null = null;
 let loading: Promise<FFmpeg> | null = null;
@@ -17,35 +21,46 @@ async function getFFmpeg(onProgress?: ConvertProgress): Promise<FFmpeg> {
   if (loading) return loading;
 
   loading = (async () => {
-    try {
-      onProgress?.(0, 'loading');
-      const ffmpeg = new FFmpeg();
-      // Optional: capture logs for debugging.
-      ffmpeg.on('log', () => {});
+    onProgress?.(0, 'loading');
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on('log', () => {});
 
-      // The ffmpeg internal worker uses dynamic import() to load the core
-      // script. Browsers refuse to import same-origin module from inside a
-      // cross-origin Worker context → "failed to import ffmpeg-core.js".
-      // Wrapping the URLs in blob: URLs (via toBlobURL) makes them importable
-      // from the worker. Files are still fetched from our own /ffmpeg/ origin.
-      const coreSrc = new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString();
-      const wasmSrc = new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString();
-      onProgress?.(20, 'loading');
-      const coreURL = await toBlobURL(coreSrc, 'text/javascript');
-      onProgress?.(60, 'loading');
-      const wasmURL = await toBlobURL(wasmSrc, 'application/wasm');
-      onProgress?.(90, 'loading');
-      await ffmpeg.load({ coreURL, wasmURL });
-      onProgress?.(100, 'loading');
-      instance = ffmpeg;
-      return ffmpeg;
-    } catch (err) {
-      loading = null; // allow retry on next call
-      throw new Error(
-        'ffmpeg.wasm se nepodařilo načíst: ' +
-          (err instanceof Error ? err.message : String(err) || 'unknown')
-      );
+    const sources: { label: string; core: string; wasm: string }[] = [
+      {
+        label: 'local',
+        core: new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString(),
+        wasm: new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString(),
+      },
+      {
+        label: 'unpkg',
+        core: `${UNPKG_BASE}/ffmpeg-core.js`,
+        wasm: `${UNPKG_BASE}/ffmpeg-core.wasm`,
+      },
+    ];
+
+    let lastErr: unknown = null;
+    for (const src of sources) {
+      try {
+        onProgress?.(10, 'loading');
+        const coreURL = await toBlobURL(src.core, 'text/javascript');
+        onProgress?.(50, 'loading');
+        const wasmURL = await toBlobURL(src.wasm, 'application/wasm');
+        onProgress?.(90, 'loading');
+        await ffmpeg.load({ coreURL, wasmURL });
+        onProgress?.(100, 'loading');
+        instance = ffmpeg;
+        return ffmpeg;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[ffmpeg] load from ${src.label} failed, trying next:`, err);
+      }
     }
+
+    loading = null;
+    throw new Error(
+      'ffmpeg.wasm se nepodařilo načíst (lokálně i z unpkg): ' +
+        (lastErr instanceof Error ? lastErr.message : String(lastErr) || 'unknown')
+    );
   })();
   return loading;
 }
