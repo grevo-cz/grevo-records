@@ -87,19 +87,30 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       return;
     }
     try {
-      const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
-        if (stageName === 'loading') {
-          setStage({ kind: 'loading-ffmpeg', pct });
-        } else {
-          setStage({ kind: 'converting', pct });
-        }
-      });
+      let finalBlob = result.blob;
+      let finalMime = result.mimeType;
+      let finalExt = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
+
+      // If recorder already produced MP4 (Chrome 126+), skip ffmpeg entirely.
+      if (!result.mimeType.includes('mp4')) {
+        const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
+          if (stageName === 'loading') {
+            setStage({ kind: 'loading-ffmpeg', pct });
+          } else {
+            setStage({ kind: 'converting', pct });
+          }
+        });
+        finalBlob = mp4;
+        finalMime = 'video/mp4';
+        finalExt = 'mp4';
+      }
+
       setStage({ kind: 'saving' });
       let rec = await saveRecording({
-        blob: mp4,
-        name: `${defaultName()}.mp4`,
+        blob: finalBlob,
+        name: `${defaultName()}.${finalExt}`,
         durationMs: result.durationMs,
-        mimeType: 'video/mp4',
+        mimeType: finalMime,
       });
 
       const settings = loadBunnySettings();

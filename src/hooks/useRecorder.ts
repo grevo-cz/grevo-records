@@ -39,22 +39,19 @@ interface UseRecorderReturn {
   error: string | null;
 }
 
-// WebM (VP9/VP8 + Opus) is the most reliable MediaRecorder output across
-// browsers — clean duration, seekable, lossless to the encoder. MP4 from
-// MediaRecorder (fragmented MP4) is supported on paper but produces files
-// with broken duration/seek metadata in many Chrome versions. We therefore
-// record WebM and offer post-recording conversion to MP4 if the user needs
-// QuickTime/iMovie compatibility.
+// Prefer MP4 (H.264 + AAC) when MediaRecorder supports it — Chrome 126+ does.
+// MP4 is universally playable (Safari, QuickTime, iMovie, native iOS/macOS).
+// Falls back to WebM (VP9/VP8 + Opus) on browsers without MP4 support.
 function pickMimeType(): string {
   const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm',
-    // MP4 only as a last resort
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4',
   ];
   for (const m of candidates) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) {
