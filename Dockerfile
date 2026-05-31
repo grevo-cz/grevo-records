@@ -4,6 +4,12 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Build-time injected git metadata (set from GHA workflow)
+ARG GIT_SHA=docker
+ARG GIT_DATE
+ENV BUILD_SHA=${GIT_SHA}
+ENV BUILD_DATE=${GIT_DATE}
+
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund
 

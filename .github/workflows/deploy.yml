@@ -49,6 +49,8 @@ jobs:
           file: ./Dockerfile
           push: true
           platforms: linux/amd64
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.sha }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.image }}:latest
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}
