@@ -517,7 +517,7 @@ export function TrimEditor({
 
       <div
         ref={trackRef}
-        className={`relative h-20 bg-bg-elev rounded-xl select-none overflow-hidden ${
+        className={`relative h-28 bg-bg-elev rounded-xl select-none overflow-hidden ${
           shiftHeld ? 'cursor-crosshair' : 'cursor-pointer'
         }`}
         onMouseDown={(e) => {
@@ -557,11 +557,11 @@ export function TrimEditor({
         {/* Audio waveform — overlay over thumbnails */}
         {peaks.length > 0 && (
           <svg
-            className="absolute inset-x-0 bottom-0 w-full h-8 pointer-events-none"
+            className="absolute inset-x-0 bottom-0 w-full h-12 pointer-events-none"
             preserveAspectRatio="none"
             viewBox={`0 0 ${peaks.length} 100`}
           >
-            <g fill="rgba(124,108,255,0.65)">
+            <g fill="rgba(124,108,255,0.75)">
               {peaks.map((p, i) => {
                 const h = Math.max(2, p * 100);
                 return (
@@ -636,18 +636,20 @@ export function TrimEditor({
         {/* Trim start handle */}
         <div
           onMouseDown={(e) => onTrackDown(e, { kind: 'trimStart' })}
-          className="absolute top-0 bottom-0 w-3 -ml-1.5 bg-accent rounded-md cursor-ew-resize hover:bg-accent-hover flex items-center justify-center z-10 shadow-glow"
+          className="absolute top-0 bottom-0 w-4 -ml-2 bg-accent rounded-md cursor-ew-resize hover:bg-accent-hover flex items-center justify-center z-10 shadow-glow"
           style={{ left: `${trimStartPct}%` }}
+          title="Drag pro ořez začátku"
         >
-          <div className="w-0.5 h-8 bg-white/90 rounded" />
+          <div className="w-0.5 h-12 bg-white/90 rounded" />
         </div>
         {/* Trim end handle */}
         <div
           onMouseDown={(e) => onTrackDown(e, { kind: 'trimEnd' })}
-          className="absolute top-0 bottom-0 w-3 -ml-1.5 bg-accent rounded-md cursor-ew-resize hover:bg-accent-hover flex items-center justify-center z-10 shadow-glow"
+          className="absolute top-0 bottom-0 w-4 -ml-2 bg-accent rounded-md cursor-ew-resize hover:bg-accent-hover flex items-center justify-center z-10 shadow-glow"
           style={{ left: `${trimEndPct}%` }}
+          title="Drag pro ořez konce"
         >
-          <div className="w-0.5 h-8 bg-white/90 rounded" />
+          <div className="w-0.5 h-12 bg-white/90 rounded" />
         </div>
 
         {/* Playhead */}
