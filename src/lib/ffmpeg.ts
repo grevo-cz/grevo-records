@@ -2,7 +2,7 @@
 // Core files are bundled in public/ffmpeg/ (self-hosted) — no unpkg/CORS issues.
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 let instance: FFmpeg | null = null;
 let loading: Promise<FFmpeg> | null = null;
@@ -22,11 +22,20 @@ async function getFFmpeg(onProgress?: ConvertProgress): Promise<FFmpeg> {
       const ffmpeg = new FFmpeg();
       // Optional: capture logs for debugging.
       ffmpeg.on('log', () => {});
-      onProgress?.(30, 'loading');
-      await ffmpeg.load({
-        coreURL: new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString(),
-        wasmURL: new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString(),
-      });
+
+      // The ffmpeg internal worker uses dynamic import() to load the core
+      // script. Browsers refuse to import same-origin module from inside a
+      // cross-origin Worker context → "failed to import ffmpeg-core.js".
+      // Wrapping the URLs in blob: URLs (via toBlobURL) makes them importable
+      // from the worker. Files are still fetched from our own /ffmpeg/ origin.
+      const coreSrc = new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString();
+      const wasmSrc = new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString();
+      onProgress?.(20, 'loading');
+      const coreURL = await toBlobURL(coreSrc, 'text/javascript');
+      onProgress?.(60, 'loading');
+      const wasmURL = await toBlobURL(wasmSrc, 'application/wasm');
+      onProgress?.(90, 'loading');
+      await ffmpeg.load({ coreURL, wasmURL });
       onProgress?.(100, 'loading');
       instance = ffmpeg;
       return ffmpeg;
