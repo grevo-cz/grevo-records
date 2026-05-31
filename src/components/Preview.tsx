@@ -14,6 +14,7 @@ import { TrimEditor } from './TrimEditor';
 import { deleteRecording, renameRecording } from '../lib/storage';
 import { downloadBlob } from '../lib/download';
 import { UploadButton } from './UploadButton';
+import { ConvertMp4Button } from './ConvertMp4Button';
 import { confirmDialog } from '../lib/confirm';
 import { toast } from '../lib/toast';
 
@@ -131,7 +132,8 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <ConvertMp4Button recording={recording} onConverted={onUpdated} />
           <UploadButton recording={recording} variant="secondary" onUploaded={onUpdated} />
           <button onClick={handleDownload} className="btn-secondary">
             <Download className="w-4 h-4" /> Stáhnout
