@@ -19,6 +19,15 @@ type State =
   | { kind: 'success'; url: string }
   | { kind: 'error'; message: string };
 
+// Normalize a URL — ensure it has https:// scheme.
+// Older recordings may have been saved with bare hostname; without scheme,
+// browsers treat them as relative paths (breaks the Otevřít button).
+function normalizeUrl(url: string): string {
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url)) return url;
+  return 'https://' + url.replace(/^\/+/, '');
+}
+
 export function UploadButton({ recording, variant = 'secondary', onUploaded }: Props) {
   const [state, setState] = useState<State>(
     recording.uploadedUrl
@@ -73,7 +82,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
     e.stopPropagation();
     if (state.kind !== 'success') return;
     try {
-      await navigator.clipboard.writeText(state.url);
+      await navigator.clipboard.writeText(normalizeUrl(state.url));
       setCopied(true);
       toast.success('Link zkopírován do schránky.');
       setTimeout(() => setCopied(false), 1500);
@@ -88,7 +97,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       return (
         <span
           onClick={copyLink}
-          title={copied ? 'Zkopírováno' : `Kopírovat link (${state.url})`}
+          title={copied ? 'Zkopírováno' : `Kopírovat link (${normalizeUrl(state.url)})`}
           className="btn-ghost p-1.5 cursor-pointer text-accent"
         >
           {copied ? <Check className="w-4 h-4" /> : <Cloud className="w-4 h-4" />}
@@ -123,7 +132,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
         <Cloud className="w-4 h-4 text-accent" />
         <span className="text-sm text-accent">Na Bunny:</span>
         <code className="text-xs text-text-primary bg-bg-elev rounded px-2 py-0.5 max-w-[280px] truncate">
-          {state.url}
+          {normalizeUrl(state.url)}
         </code>
         <button onClick={copyLink} className="btn-ghost p-1.5 text-xs">
           {copied ? (
@@ -137,7 +146,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
           )}
         </button>
         <a
-          href={state.url}
+          href={normalizeUrl(state.url)}
           target="_blank"
           rel="noreferrer"
           className="btn-ghost p-1.5 text-xs"

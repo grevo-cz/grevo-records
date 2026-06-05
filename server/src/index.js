@@ -67,7 +67,9 @@ function readBunnyCreds(req, res) {
   const zone = String(req.headers['x-bunny-zone'] || '').trim();
   const host = String(req.headers['x-bunny-host'] || 'storage.bunnycdn.com').trim();
   const key = String(req.headers['x-bunny-key'] || '').trim();
-  const pull = String(req.headers['x-pull-zone'] || '').trim().replace(/\/+$/, '');
+  let pull = String(req.headers['x-pull-zone'] || '').trim().replace(/\/+$/, '');
+  // Ensure scheme — user may have provided bare hostname
+  if (pull && !/^https?:\/\//i.test(pull)) pull = 'https://' + pull;
 
   if (!zone || !key || !pull) {
     res.status(400).json({

@@ -180,9 +180,14 @@ export function Settings() {
               className="input w-full font-mono"
               placeholder="https://my-zone.b-cdn.net"
               value={bunny.pullZoneUrl}
-              onChange={(e) =>
-                update('pullZoneUrl', e.target.value.trim().replace(/\/+$/, ''))
-              }
+              onChange={(e) => {
+                let v = e.target.value.trim().replace(/\/+$/, '');
+                // Auto-prefix https:// if user typed bare hostname
+                if (v && !/^https?:\/\//i.test(v)) {
+                  v = 'https://' + v;
+                }
+                update('pullZoneUrl', v);
+              }}
             />
           </Field>
 
