@@ -80,13 +80,26 @@ function readBunnyCreds(req, res) {
   return { zone, host, key, pull };
 }
 
+// Replace Czech / accented characters with ASCII fallback, then strip what
+// remains unsafe for URLs. Spaces become underscores.
+function transliterate(s) {
+  const map = {
+    á: 'a', č: 'c', ď: 'd', é: 'e', ě: 'e', í: 'i', ň: 'n', ó: 'o',
+    ř: 'r', š: 's', ť: 't', ú: 'u', ů: 'u', ý: 'y', ž: 'z',
+    Á: 'A', Č: 'C', Ď: 'D', É: 'E', Ě: 'E', Í: 'I', Ň: 'N', Ó: 'O',
+    Ř: 'R', Š: 'S', Ť: 'T', Ú: 'U', Ů: 'U', Ý: 'Y', Ž: 'Z',
+  };
+  return s.replace(/[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/g, (c) => map[c] || c);
+}
+
 function sanitizeName(input) {
-  return String(input || '')
-    .replace(/\\/g, '/')
-    .split('/')
-    .pop()
+  const base = String(input || '').replace(/\\/g, '/').split('/').pop();
+  const ascii = transliterate(base);
+  return ascii
+    .replace(/\s+/g, '_')
     .replace(/[^a-zA-Z0-9._-]/g, '-')
-    .slice(0, 200);
+    .replace(/-+/g, '-')
+    .slice(0, 200) || 'recording';
 }
 
 function sanitizeFolder(input) {

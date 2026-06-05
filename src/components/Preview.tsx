@@ -52,13 +52,29 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
       setName(recording.name);
       return;
     }
+    // Preserve original extension if user dropped it
+    const origExt = recording.name.match(/\.[^.]+$/)?.[0] || '';
+    const finalName =
+      origExt && !trimmed.toLowerCase().endsWith(origExt.toLowerCase())
+        ? trimmed + origExt
+        : trimmed;
     try {
-      await renameRecording(recording.id, trimmed);
-      onUpdated({ ...recording, name: trimmed });
+      await renameRecording(recording.id, finalName);
+      onUpdated({ ...recording, name: finalName });
       setRenaming(false);
+      toast.success(`Přejmenováno na ${finalName}`);
     } catch (e) {
       toast.error('Přejmenování selhalo: ' + (e as Error).message);
     }
+  };
+
+  // Auto-commit rename when user clicks away (e.g. Upload button).
+  // The cancel button uses onMouseDown to fire BEFORE blur and cancel cleanly.
+  const handleRenameBlur = () => {
+    // Small delay so explicit Cancel/Check click is registered first
+    setTimeout(() => {
+      if (renaming) handleRename();
+    }, 100);
   };
 
   const handleDelete = async () => {
@@ -95,24 +111,38 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
                   autoFocus
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  onBlur={handleRenameBlur}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRename();
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleRename();
+                    }
                     if (e.key === 'Escape') {
+                      e.preventDefault();
                       setName(recording.name);
                       setRenaming(false);
                     }
                   }}
                   className="input flex-1 text-lg"
                 />
-                <button onClick={handleRename} className="btn-ghost p-2 text-success">
+                <button
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // keep focus, avoid blur race
+                    handleRename();
+                  }}
+                  className="btn-ghost p-2 text-success"
+                  title="Uložit jméno (Enter)"
+                >
                   <Check className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={() => {
+                  onMouseDown={(e) => {
+                    e.preventDefault();
                     setName(recording.name);
                     setRenaming(false);
                   }}
                   className="btn-ghost p-2"
+                  title="Zrušit (Esc)"
                 >
                   <X className="w-5 h-5" />
                 </button>
