@@ -200,29 +200,62 @@ export function useRecorder(): UseRecorderReturn {
           return;
         }
 
-        // 2) Mic
+        // 2) Mic — a missing/stale device must NOT kill the recording.
+        // Saved deviceIds can go stale (Chrome rotates them, device unplugged);
+        // fall back to the default mic, then to no mic at all.
         if (micDeviceId) {
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              deviceId: { exact: micDeviceId },
-              echoCancellation: true,
-              noiseSuppression: true,
-            },
-          });
-          micStreamRef.current = micStream;
+          try {
+            micStreamRef.current = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                deviceId: { exact: micDeviceId },
+                echoCancellation: true,
+                noiseSuppression: true,
+              },
+            });
+          } catch {
+            try {
+              micStreamRef.current = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true },
+              });
+              toast.warning('Vybraný mikrofon není dostupný — používám výchozí.', {
+                title: 'Mikrofon',
+              });
+            } catch {
+              toast.warning('Mikrofon se nepodařilo otevřít — nahrávám bez něj.', {
+                title: 'Mikrofon',
+              });
+            }
+          }
         }
 
-        // 3) Camera
+        // 3) Camera — same policy: degrade gracefully, never abort.
         if (cameraDeviceId) {
-          const camStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              deviceId: { exact: cameraDeviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-            },
-          });
-          cameraStreamRef.current = camStream;
-          setCameraStream(camStream);
+          try {
+            const camStream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                deviceId: { exact: cameraDeviceId },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+              },
+            });
+            cameraStreamRef.current = camStream;
+            setCameraStream(camStream);
+          } catch {
+            try {
+              const camStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 640 }, height: { ideal: 480 } },
+              });
+              cameraStreamRef.current = camStream;
+              setCameraStream(camStream);
+              toast.warning('Vybraná kamera není dostupná — používám výchozí.', {
+                title: 'Kamera',
+              });
+            } catch {
+              toast.warning('Kameru se nepodařilo otevřít — nahrávám bez ní.', {
+                title: 'Kamera',
+              });
+            }
+          }
         }
 
         // 4) Video track for recorder
