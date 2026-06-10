@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from '../lib/toast';
 
 export type RecorderState =
   | 'idle'
@@ -6,7 +7,8 @@ export type RecorderState =
   | 'countdown'
   | 'recording'
   | 'paused'
-  | 'stopping';
+  | 'stopping'
+  | 'autostopped';
 
 interface StartOptions {
   micDeviceId: string | null;
@@ -36,36 +38,75 @@ interface UseRecorderReturn {
   resume: () => void;
   stop: () => Promise<StopResult | null>;
   cancel: () => void;
+  /**
+   * When recording ended outside our Stop button (e.g. "Stop sharing" in the
+   * browser bar), state becomes 'autostopped' and the result waits here.
+   * Calling this returns it once and clears it.
+   */
+  takeAutoResult: () => StopResult | null;
   error: string | null;
 }
 
 // Prefer MP4 (H.264 + AAC) when MediaRecorder supports it — Chrome 126+ does.
 // MP4 is universally playable (Safari, QuickTime, iMovie, native iOS/macOS).
 // Falls back to WebM (VP9/VP8 + Opus) on browsers without MP4 support.
-function pickMimeType(): string {
-  const candidates = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4;codecs=h264,aac',
-    'video/mp4',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
-  for (const m of candidates) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) {
-      return m;
-    }
-  }
-  return '';
+//
+// IMPORTANT: candidates must match the actual track layout. Declaring an
+// audio codec (mp4a/opus) while the stream has no audio track makes Chrome's
+// muxer error out immediately after start — recording "starts then dies".
+function mimeCandidates(hasAudio: boolean): string[] {
+  return hasAudio
+    ? [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=h264,aac',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ]
+    : [
+        'video/mp4;codecs=avc1.42E01E',
+        'video/mp4;codecs=h264',
+        'video/mp4',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+      ];
 }
 
 export function detectRecordingFormat(): 'mp4' | 'webm' | 'unknown' {
-  const mime = pickMimeType();
-  if (mime.includes('mp4')) return 'mp4';
-  if (mime.includes('webm')) return 'webm';
+  for (const m of mimeCandidates(true)) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) {
+      return m.includes('mp4') ? 'mp4' : 'webm';
+    }
+  }
   return 'unknown';
+}
+
+/** Try candidates in order; return the first MediaRecorder that constructs. */
+function createRecorder(
+  stream: MediaStream,
+  candidates: string[]
+): { recorder: MediaRecorder; mimeType: string } {
+  let lastErr: unknown = null;
+  for (const mimeType of candidates) {
+    if (!MediaRecorder.isTypeSupported(mimeType)) continue;
+    try {
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 5_000_000,
+      });
+      return { recorder, mimeType };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // Last resort: let the browser pick
+  try {
+    return { recorder: new MediaRecorder(stream), mimeType: '' };
+  } catch (e) {
+    throw lastErr instanceof Error ? lastErr : (e as Error);
+  }
 }
 
 export function useRecorder(): UseRecorderReturn {
@@ -91,8 +132,10 @@ export function useRecorder(): UseRecorderReturn {
   const countdownTimerRef = useRef<number | null>(null);
   const countdownResolveRef = useRef<(() => void) | null>(null);
   const resolveStopRef = useRef<((v: StopResult | null) => void) | null>(null);
-  const mimeRef = useRef<string>('');
   const cancelledRef = useRef(false);
+  const recorderErrorRef = useRef(false);
+  const retriedWebmRef = useRef(false);
+  const autoResultRef = useRef<StopResult | null>(null);
 
   const stopAllStreams = useCallback(() => {
     displayStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -139,6 +182,9 @@ export function useRecorder(): UseRecorderReturn {
     }: StartOptions) => {
       setError(null);
       cancelledRef.current = false;
+      recorderErrorRef.current = false;
+      retriedWebmRef.current = false;
+      autoResultRef.current = null;
       setState('preparing');
       try {
         // 1) Screen — native picker
@@ -219,9 +265,6 @@ export function useRecorder(): UseRecorderReturn {
         if (hasAudio) tracks.push(audioDest.stream.getAudioTracks()[0]);
         const combined = new MediaStream(tracks);
 
-        const mimeType = pickMimeType();
-        mimeRef.current = mimeType;
-
         // 6) Countdown (streams already active, preview shows)
         if (countdownSeconds > 0) {
           setState('countdown');
@@ -249,43 +292,103 @@ export function useRecorder(): UseRecorderReturn {
           }
         }
 
-        // 7) Start MediaRecorder
-        const recorder = new MediaRecorder(combined, {
-          mimeType: mimeType || undefined,
-          videoBitsPerSecond: 5_000_000,
-        });
-        chunksRef.current = [];
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-        };
-        recorder.onstop = () => {
-          const blob = new Blob(chunksRef.current, {
-            type: mimeType || 'video/webm',
-          });
-          const durationMs =
-            Date.now() -
-            startedAtRef.current -
-            pausedAccumRef.current -
-            (pausedAtRef.current ? Date.now() - pausedAtRef.current : 0);
-          chunksRef.current = [];
+        // 7) Arm + start the MediaRecorder, with one automatic WebM retry
+        // if the preferred (MP4) muxer errors out right after starting.
+        const finishAll = (st: RecorderState) => {
           stopTimer();
           stopAllStreams();
-          setState('idle');
-          resolveStopRef.current?.({
-            blob,
-            mimeType: mimeType || 'video/webm',
-            durationMs: Math.max(0, durationMs),
-          });
-          resolveStopRef.current = null;
+          setState(st);
         };
+
+        const armAndStart = (candidates: string[]) => {
+          const { recorder, mimeType } = createRecorder(combined, candidates);
+          chunksRef.current = [];
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+          };
+
+          recorder.onerror = (ev) => {
+            console.error('[recorder] error event:', ev);
+            recorderErrorRef.current = true;
+            // Chrome typically fires onstop right after error; force it if not.
+            if (recorder.state !== 'inactive') {
+              try {
+                recorder.stop();
+              } catch {}
+            }
+          };
+
+          recorder.onstop = () => {
+            const blob = new Blob(chunksRef.current, {
+              type: mimeType || 'video/webm',
+            });
+            const durationMs = Math.max(
+              0,
+              Date.now() -
+                startedAtRef.current -
+                pausedAccumRef.current -
+                (pausedAtRef.current ? Date.now() - pausedAtRef.current : 0)
+            );
+            chunksRef.current = [];
+
+            // a) User pressed our Stop — resolve their await.
+            const resolver = resolveStopRef.current;
+            if (resolver) {
+              finishAll('idle');
+              resolver({ blob, mimeType: mimeType || 'video/webm', durationMs });
+              resolveStopRef.current = null;
+              return;
+            }
+
+            // b) Cancelled — discard.
+            if (cancelledRef.current) {
+              finishAll('idle');
+              return;
+            }
+
+            // c) Recorder errored right after start (typically MP4 muxer
+            //    rejecting the track layout) — retry once with WebM on the
+            //    SAME streams, no new screen picker needed.
+            if (recorderErrorRef.current && !retriedWebmRef.current) {
+              recorderErrorRef.current = false;
+              retriedWebmRef.current = true;
+              const webmOnly = candidates.filter((c) => c.includes('webm'));
+              try {
+                console.warn('[recorder] retrying with WebM after MP4 failure');
+                toast.warning(
+                  'Nahrávání v MP4 selhalo — pokračuji ve WebM. Po uložení můžeš použít „Konvertovat na MP4".',
+                  { title: 'Nahrávání', duration: 6000 }
+                );
+                armAndStart(webmOnly.length ? webmOnly : ['video/webm']);
+                return;
+              } catch (e) {
+                console.error('[recorder] WebM retry failed too:', e);
+              }
+            }
+
+            // d) Unexpected stop ("Stop sharing" in browser bar, or fatal
+            //    error) — keep the result so the UI can save it.
+            autoResultRef.current = {
+              blob,
+              mimeType: mimeType || 'video/webm',
+              durationMs,
+            };
+            finishAll('autostopped');
+          };
+
+          recorderRef.current = recorder;
+          recorder.start(1000);
+        };
+
+        armAndStart(mimeCandidates(hasAudio));
+
         displayMS.getVideoTracks()[0].onended = () => {
           if (recorderRef.current && recorderRef.current.state !== 'inactive') {
             recorderRef.current.stop();
           }
         };
 
-        recorderRef.current = recorder;
-        recorder.start(1000);
         startedAtRef.current = Date.now();
         pausedAccumRef.current = 0;
         pausedAtRef.current = null;
@@ -334,6 +437,13 @@ export function useRecorder(): UseRecorderReturn {
     return new Promise<StopResult | null>((resolve) => {
       const rec = recorderRef.current;
       if (!rec || rec.state === 'inactive') {
+        // Recording may have already auto-stopped — hand over that result.
+        if (autoResultRef.current) {
+          const r = autoResultRef.current;
+          autoResultRef.current = null;
+          resolve(r);
+          return;
+        }
         resolve(null);
         return;
       }
@@ -341,6 +451,12 @@ export function useRecorder(): UseRecorderReturn {
       setState('stopping');
       rec.stop();
     });
+  }, []);
+
+  const takeAutoResult = useCallback((): StopResult | null => {
+    const r = autoResultRef.current;
+    autoResultRef.current = null;
+    return r;
   }, []);
 
   const cancel = useCallback(() => {
@@ -360,6 +476,7 @@ export function useRecorder(): UseRecorderReturn {
     stopAllStreams();
     setState('idle');
     resolveStopRef.current = null;
+    autoResultRef.current = null;
   }, [stopAllStreams, stopTimer]);
 
   return {
@@ -373,6 +490,7 @@ export function useRecorder(): UseRecorderReturn {
     resume,
     stop,
     cancel,
+    takeAutoResult,
     error,
   };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, Square, X, Loader2 } from 'lucide-react';
 import { useRecorder } from '../hooks/useRecorder';
 import { LivePreview } from './LivePreview';
@@ -78,14 +78,11 @@ export function RecordingView({ onFinish, onCancel }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [started]);
 
-  const handleStop = async () => {
-    setStage({ kind: 'loading-ffmpeg', pct: 0 });
-    const result = await recorder.stop();
-    if (!result) {
-      setStage({ kind: 'idle' });
-      onCancel();
-      return;
-    }
+  const processResult = async (result: {
+    blob: Blob;
+    mimeType: string;
+    durationMs: number;
+  }) => {
     try {
       let finalBlob = result.blob;
       let finalMime = result.mimeType;
@@ -162,6 +159,38 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       setStage({ kind: 'idle' });
     }
   };
+
+  const handleStop = async () => {
+    setStage({ kind: 'loading-ffmpeg', pct: 0 });
+    const result = await recorder.stop();
+    if (!result) {
+      setStage({ kind: 'idle' });
+      onCancel();
+      return;
+    }
+    await processResult(result);
+  };
+
+  // Recording can end outside our Stop button — user clicks "Stop sharing"
+  // in the browser bar, or the recorder dies fatally. The hook parks the
+  // result and flips state to 'autostopped'; pick it up and save it.
+  const autoHandledRef = useRef(false);
+  useEffect(() => {
+    if (recorder.state !== 'autostopped' || autoHandledRef.current) return;
+    autoHandledRef.current = true;
+    const result = recorder.takeAutoResult();
+    if (result && result.blob.size > 0) {
+      setStage({ kind: 'loading-ffmpeg', pct: 0 });
+      processResult(result);
+    } else {
+      toast.error(
+        'Nahrávání se nečekaně ukončilo a nic se nestihlo zaznamenat. Zkus to znovu.',
+        { title: 'Nahrávání' }
+      );
+      onCancel();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recorder.state]);
 
   const handleCancel = () => {
     recorder.cancel();
