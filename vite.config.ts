@@ -35,6 +35,10 @@ function buildMetaPlugin(): Plugin {
 export default defineConfig({
   plugins: [react(), buildMetaPlugin()],
   base: './',
+  optimizeDeps: {
+    // Vite pre-bundling breaks @ffmpeg/ffmpeg's internal worker resolution.
+    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+  },
   define: {
     __BUILD_SHA__: JSON.stringify(gitSha),
     __BUILD_DATE__: JSON.stringify(gitDate),

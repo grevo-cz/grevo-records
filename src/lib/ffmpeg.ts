@@ -5,8 +5,11 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
+// ESM build je povinný — worker uvnitř @ffmpeg/ffmpeg načítá core přes
+// dynamic import(), který funguje jen s ES modulem (UMD selže s
+// "failed to import ffmpeg-core.js").
 const CORE_VERSION = '0.12.6';
-const UNPKG_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/umd`;
+const UNPKG_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`;
 
 let instance: FFmpeg | null = null;
 let loading: Promise<FFmpeg> | null = null;

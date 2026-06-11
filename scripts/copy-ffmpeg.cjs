@@ -5,6 +5,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// IMPORTANT: must be the ESM build — @ffmpeg/ffmpeg's worker loads the core
+// via dynamic import(), which only works with an ES module. The UMD build
+// fails with "failed to import ffmpeg-core.js".
 const SRC_DIR = path.join(
   __dirname,
   '..',
@@ -12,7 +15,7 @@ const SRC_DIR = path.join(
   '@ffmpeg',
   'core',
   'dist',
-  'umd'
+  'esm'
 );
 const DEST_DIR = path.join(__dirname, '..', 'public', 'ffmpeg');
 
