@@ -5,7 +5,7 @@ import { LivePreview } from './LivePreview';
 import { formatDuration } from '../lib/format';
 import { formatBytes } from '../lib/format';
 import { saveRecording, setUploadedUrl, deleteRecording } from '../lib/storage';
-import { convertToMp4 } from '../lib/ffmpeg';
+import { convertToMp4, preloadFFmpeg } from '../lib/ffmpeg';
 import { loadBunnySettings, isBunnyConfigured } from '../lib/settings';
 import {
   uploadToBunny,
@@ -59,6 +59,12 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       return;
     }
     startedRef.current = true;
+    // Warm up the browser converter (~31 MB wasm) while the user records —
+    // by Stop time the engine is loaded and conversion starts instantly.
+    // Skipped when Bunny is configured (server converts during upload).
+    if (!isBunnyConfigured()) {
+      preloadFFmpeg();
+    }
     const cfg = JSON.parse(raw) as StartConfig;
     recorder.start(cfg).catch((err) => {
       const name = err?.name as string | undefined;

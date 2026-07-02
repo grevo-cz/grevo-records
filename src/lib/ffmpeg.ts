@@ -1,69 +1,91 @@
-// Lazy-loaded ffmpeg.wasm for in-browser WebM → MP4 conversion.
-// We try self-hosted files in /ffmpeg/ first, fall back to unpkg.
-// Both paths go through toBlobURL so the internal worker can importScripts().
+// In-browser WebM → MP4 conversion, ported from the user's vidslim project.
+//
+// Two cores, picked at runtime:
+// - /ffmpeg    → multithreaded (needs SharedArrayBuffer via COOP/COEP headers,
+//                i.e. crossOriginIsolated). ~4x faster.
+// - /ffmpeg-st → single-threaded fallback when isolation is unavailable.
+//
+// Critical encode flags (learned the hard way):
+// - `-fps_mode vfr`  — MediaRecorder WebM reports a bogus 1000 fps nominal
+//   rate; without VFR, ffmpeg CFR-duplicates frames and a 20 s clip takes
+//   10+ minutes to encode.
+// - `-threads 4|1`   — x264 auto-threading exceeds the wasm pthread pool and
+//   aborts the core; pin explicitly.
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
-// ESM build je povinný — worker uvnitř @ffmpeg/ffmpeg načítá core přes
-// dynamic import(), který funguje jen s ES modulem (UMD selže s
-// "failed to import ffmpeg-core.js").
-const CORE_VERSION = '0.12.6';
-const UNPKG_BASE = `https://unpkg.com/@ffmpeg/core@${CORE_VERSION}/dist/esm`;
-
 let instance: FFmpeg | null = null;
 let loading: Promise<FFmpeg> | null = null;
+let loadedMt = false;
 
 export type ConvertProgress = (
   pct: number,
   stage: 'loading' | 'converting'
 ) => void;
 
-async function getFFmpeg(onProgress?: ConvertProgress): Promise<FFmpeg> {
-  if (instance) return instance;
+/** Multithreaded core needs SharedArrayBuffer (COOP/COEP → crossOriginIsolated). */
+export function useMultithreaded(): boolean {
+  const forced = new URLSearchParams(location.search).get('core');
+  if (forced === 'st') return false;
+  if (forced === 'mt') return true;
+  return typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+}
+
+async function loadCore(
+  ffmpeg: FFmpeg,
+  mt: boolean,
+  onProgress?: ConvertProgress
+): Promise<void> {
+  const base = new URL(mt ? '/ffmpeg' : '/ffmpeg-st', window.location.href).toString();
+  onProgress?.(10, 'loading');
+  // Blob URLs: the internal worker dynamic-imports the core — must be
+  // importable from the worker context regardless of origin quirks.
+  const coreURL = await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript');
+  onProgress?.(40, 'loading');
+  const wasmURL = await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm');
+  onProgress?.(85, 'loading');
+  const workerURL = mt
+    ? await toBlobURL(`${base}/ffmpeg-core.worker.js`, 'text/javascript')
+    : undefined;
+  await ffmpeg.load({ coreURL, wasmURL, workerURL });
+  onProgress?.(100, 'loading');
+}
+
+function getFFmpeg(onProgress?: ConvertProgress): Promise<FFmpeg> {
+  if (instance) return Promise.resolve(instance);
   if (loading) return loading;
 
   loading = (async () => {
-    onProgress?.(0, 'loading');
     const ffmpeg = new FFmpeg();
     ffmpeg.on('log', () => {});
-
-    const sources: { label: string; core: string; wasm: string }[] = [
-      {
-        label: 'local',
-        core: new URL('/ffmpeg/ffmpeg-core.js', window.location.href).toString(),
-        wasm: new URL('/ffmpeg/ffmpeg-core.wasm', window.location.href).toString(),
-      },
-      {
-        label: 'unpkg',
-        core: `${UNPKG_BASE}/ffmpeg-core.js`,
-        wasm: `${UNPKG_BASE}/ffmpeg-core.wasm`,
-      },
-    ];
-
-    let lastErr: unknown = null;
-    for (const src of sources) {
+    const wantMt = useMultithreaded();
+    try {
+      await loadCore(ffmpeg, wantMt, onProgress);
+      loadedMt = wantMt;
+    } catch (mtErr) {
+      if (!wantMt) {
+        loading = null;
+        throw new Error(
+          'ffmpeg.wasm se nepodařilo načíst: ' +
+            (mtErr instanceof Error ? mtErr.message : String(mtErr))
+        );
+      }
+      // MT core failed (isolation edge case) → retry single-threaded.
+      console.warn('[ffmpeg] MT core failed, falling back to ST:', mtErr);
       try {
-        onProgress?.(10, 'loading');
-        const coreURL = await toBlobURL(src.core, 'text/javascript');
-        onProgress?.(50, 'loading');
-        const wasmURL = await toBlobURL(src.wasm, 'application/wasm');
-        onProgress?.(90, 'loading');
-        await ffmpeg.load({ coreURL, wasmURL });
-        onProgress?.(100, 'loading');
-        instance = ffmpeg;
-        return ffmpeg;
-      } catch (err) {
-        lastErr = err;
-        console.warn(`[ffmpeg] load from ${src.label} failed, trying next:`, err);
+        await loadCore(ffmpeg, false, onProgress);
+        loadedMt = false;
+      } catch (stErr) {
+        loading = null;
+        throw new Error(
+          'ffmpeg.wasm se nepodařilo načíst (MT i ST): ' +
+            (stErr instanceof Error ? stErr.message : String(stErr))
+        );
       }
     }
-
-    loading = null;
-    throw new Error(
-      'ffmpeg.wasm se nepodařilo načíst (lokálně i z unpkg): ' +
-        (lastErr instanceof Error ? lastErr.message : String(lastErr) || 'unknown')
-    );
+    instance = ffmpeg;
+    return ffmpeg;
   })();
   return loading;
 }
@@ -72,9 +94,14 @@ export function isFFmpegReady(): boolean {
   return instance !== null;
 }
 
+/** Warm up the engine (~31 MB wasm) ahead of time, e.g. on app load. */
+export function preloadFFmpeg(): void {
+  getFFmpeg().catch(() => {});
+}
+
 /**
  * Converts a WebM blob to MP4 (H.264 + AAC) entirely in the browser.
- * Approx. 0.5–3x video length on Apple Silicon.
+ * With the MT core and VFR fix this runs near-realtime for screen content.
  */
 export async function convertToMp4(
   source: Blob,
@@ -82,12 +109,9 @@ export async function convertToMp4(
 ): Promise<Blob> {
   const ffmpeg = await getFFmpeg(onProgress);
 
-  const handleProgress = (event: { progress: number }) => {
+  const handleProgress = ({ progress }: { progress: number }) => {
     if (onProgress) {
-      onProgress(
-        Math.min(99, Math.max(0, event.progress * 100)),
-        'converting'
-      );
+      onProgress(Math.min(99, Math.max(0, progress * 100)), 'converting');
     }
   };
   ffmpeg.on('progress', handleProgress);
@@ -98,25 +122,22 @@ export async function convertToMp4(
   try {
     await ffmpeg.writeFile(inputName, await fetchFile(source));
     const ret = await ffmpeg.exec([
-      '-i',
-      inputName,
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      '-crf',
-      '23',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
-      '-movflags',
-      '+faststart',
+      '-i', inputName,
+      // Keep source frame timestamps — MediaRecorder/webm inputs report a
+      // bogus 1000 fps nominal rate that would otherwise be CFR-duplicated.
+      '-fps_mode', 'vfr',
+      // x264 auto-threading exceeds the wasm pthread pool and aborts the core.
+      '-threads', loadedMt ? '4' : '1',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
       outputName,
     ]);
-    if (ret !== 0) throw new Error(`ffmpeg exec returned ${ret}`);
+    if (ret !== 0) throw new Error(`ffmpeg exited with code ${ret}`);
 
     const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
     const bytes = new Uint8Array(data.byteLength);
@@ -137,4 +158,11 @@ export async function convertToMp4(
       await ffmpeg.deleteFile(outputName);
     } catch {}
   }
+}
+
+/** Abort a running conversion. The engine reloads on next use. */
+export function cancelConversion(): void {
+  instance?.terminate();
+  instance = null;
+  loading = null;
 }

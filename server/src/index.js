@@ -131,6 +131,9 @@ function runFfmpeg(inPath, outPath) {
     const args = [
       '-y',
       '-i', inPath,
+      // MediaRecorder WebM reports a bogus 1000 fps nominal rate — without
+      // VFR ffmpeg CFR-duplicates frames and encoding takes forever.
+      '-fps_mode', 'vfr',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '23',

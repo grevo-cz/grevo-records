@@ -32,6 +32,15 @@ function buildMetaPlugin(): Plugin {
   };
 }
 
+// COOP/COEP enable SharedArrayBuffer for the multithreaded ffmpeg.wasm core.
+// `credentialless` (instead of `require-corp`) keeps cross-origin fetches
+// (e.g. Bunny CDN links, unpkg) loadable; browsers without support fall back
+// to the single-threaded core at runtime.
+const crossOriginIsolation = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+};
+
 export default defineConfig({
   plugins: [react(), buildMetaPlugin()],
   base: './',
@@ -50,5 +59,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    headers: crossOriginIsolation,
+  },
+  preview: {
+    headers: crossOriginIsolation,
   },
 });
