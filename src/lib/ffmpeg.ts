@@ -171,6 +171,102 @@ export async function convertToMp4(
   }
 }
 
+export interface TrimSegment {
+  start: number;
+  end: number;
+}
+
+/**
+ * Cuts a recording to the given kept segments (joined seamlessly) and
+ * optionally changes playback speed — output is always MP4.
+ *
+ * Replaces the old canvas-replay exporter: MediaRecorder WebM has no seek
+ * cues, so seeking a hidden <video> hung forever. ffmpeg's select filter
+ * works on cue-less input and runs near-realtime with the MT core.
+ */
+export async function trimToMp4(
+  source: Blob,
+  segments: TrimSegment[],
+  playbackRate: number,
+  onProgress?: ConvertProgress
+): Promise<Blob> {
+  if (segments.length === 0) throw new Error('Nezbyly žádné úseky k uložení.');
+  const rate = Math.max(0.5, Math.min(2, playbackRate || 1));
+
+  const ffmpeg = await getFFmpeg(onProgress);
+  const handleProgress = ({ progress }: { progress: number }) => {
+    onProgress?.(Math.min(99, Math.max(0, progress * 100)), 'converting');
+  };
+  ffmpeg.on('progress', handleProgress);
+
+  const inputName = 'trim-in';
+  const outputName = 'trim-out.mp4';
+
+  const expr = segments
+    .map((s) => `between(t,${s.start.toFixed(3)},${s.end.toFixed(3)})`)
+    .join('+');
+  const vSetpts = rate === 1 ? 'N/FRAME_RATE/TB' : `(N/FRAME_RATE/TB)/${rate}`;
+  const vf = `[0:v]select='${expr}',setpts=${vSetpts}[v]`;
+  const aTempo = rate === 1 ? '' : `,atempo=${rate}`;
+  const af = `[0:a]aselect='${expr}',asetpts=N/SR/TB${aTempo}[a]`;
+
+  const commonOut = [
+    '-fps_mode', 'vfr',
+    '-threads', loadedMt ? '4' : '1',
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-pix_fmt', 'yuv420p',
+  ];
+
+  try {
+    await ffmpeg.writeFile(inputName, await fetchFile(source));
+
+    // First try with audio; recordings without an audio track make the
+    // audio filter fail — retry video-only.
+    let ret = await ffmpeg.exec([
+      '-i', inputName,
+      '-filter_complex', `${vf};${af}`,
+      '-map', '[v]', '-map', '[a]',
+      ...commonOut,
+      '-c:a', 'aac', '-b:a', '128k',
+      '-movflags', '+faststart',
+      outputName,
+    ]);
+    if (ret !== 0) {
+      console.warn('[trim] audio path failed, retrying video-only');
+      ret = await ffmpeg.exec([
+        '-i', inputName,
+        '-filter_complex', vf,
+        '-map', '[v]', '-an',
+        ...commonOut,
+        '-movflags', '+faststart',
+        outputName,
+      ]);
+    }
+    if (ret !== 0) throw new Error(`ffmpeg exited with code ${ret}`);
+
+    const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+    const bytes = new Uint8Array(data.byteLength);
+    bytes.set(data);
+    onProgress?.(100, 'converting');
+    return new Blob([bytes], { type: 'video/mp4' });
+  } catch (err) {
+    throw new Error(
+      'Střih selhal: ' +
+        (err instanceof Error ? err.message : String(err) || 'unknown')
+    );
+  } finally {
+    ffmpeg.off('progress', handleProgress);
+    try {
+      await ffmpeg.deleteFile(inputName);
+    } catch {}
+    try {
+      await ffmpeg.deleteFile(outputName);
+    } catch {}
+  }
+}
+
 /** Abort a running conversion. The engine reloads on next use. */
 export function cancelConversion(): void {
   instance?.terminate();

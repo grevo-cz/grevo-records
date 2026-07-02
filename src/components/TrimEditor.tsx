@@ -10,11 +10,15 @@ import {
   Keyboard,
   Gauge,
   Sparkles,
+  Save,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatDuration } from '../lib/format';
 import { saveRecording } from '../lib/storage';
-import { composeSegments, computeKeptSegments, type Segment } from '../lib/compose';
+import { computeKeptSegments, type Segment } from '../lib/compose';
+import { trimToMp4 } from '../lib/ffmpeg';
+import { replaceRecordingBlob } from '../lib/storage';
+import { confirmDialog } from '../lib/confirm';
 import { useThumbnails } from '../hooks/useThumbnails';
 import { useWaveform } from '../hooks/useWaveform';
 import { detectSilentRanges } from '../lib/silence';
@@ -401,34 +405,74 @@ export function TrimEditor({
     }
   };
 
-  const handleConfirm = async () => {
+  // Export přes ffmpeg (select filter) — funguje i na WebM bez seek cues,
+  // kde starý canvas-replay export visel navěky. Výstup je vždy MP4.
+  const exportTrimmed = async (): Promise<{ blob: Blob; durationMs: number } | null> => {
     if (kept.length === 0) {
       toast.error('Nezbyl žádný úsek k uložení.');
-      return;
+      return null;
     }
     setExporting(true);
     setProgressPct(0);
     try {
-      const result = await composeSegments(
+      videoEl.pause();
+      const blob = await trimToMp4(
         recording.blob,
         kept as Segment[],
-        (p) => setProgressPct(p),
-        { playbackRate }
+        playbackRate,
+        (pct) => setProgressPct(pct)
       );
+      return { blob, durationMs: (keptDuration / playbackRate) * 1000 };
+    } catch (e) {
+      toast.error((e as Error).message, { title: 'Střih' });
+      setExporting(false);
+      return null;
+    }
+  };
+
+  const handleSaveAsNew = async () => {
+    const result = await exportTrimmed();
+    if (!result) return;
+    try {
       const base = recording.name.replace(/\.[^.]+$/, '');
-      const ext = result.mimeType.includes('mp4') ? '.mp4' : '.webm';
       const rec = await saveRecording({
         blob: result.blob,
-        name: `${base}-trimmed${ext}`,
+        name: `${base}-trimmed.mp4`,
         durationMs: result.durationMs,
-        mimeType: result.mimeType,
+        mimeType: 'video/mp4',
       });
-      toast.success('Střih uložen jako nová nahrávka.');
+      toast.success('Střih uložen jako nová nahrávka (MP4).');
       onDone(rec);
     } catch (e) {
-      toast.error('Střih selhal: ' + (e as Error).message, {
-        title: 'Chyba',
+      toast.error('Uložení selhalo: ' + (e as Error).message, { title: 'Chyba' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleOverwrite = async () => {
+    const ok = await confirmDialog({
+      title: 'Přepsat původní nahrávku?',
+      message:
+        'Původní verze bude nahrazena střihem a nepůjde vrátit. Pokud byla na Bunny, starý link přestane odpovídat obsahu — nahraj ji znovu.',
+      confirmLabel: 'Přepsat',
+      danger: true,
+    });
+    if (!ok) return;
+    const result = await exportTrimmed();
+    if (!result) return;
+    try {
+      const updated = await replaceRecordingBlob(recording.id, {
+        blob: result.blob,
+        mimeType: 'video/mp4',
+        durationMs: result.durationMs,
       });
+      if (!updated) throw new Error('Nahrávka nenalezena.');
+      toast.success('Změny uloženy do původní nahrávky (MP4).');
+      onDone(updated);
+    } catch (e) {
+      toast.error('Uložení selhalo: ' + (e as Error).message, { title: 'Chyba' });
+    } finally {
       setExporting(false);
     }
   };
@@ -714,16 +758,28 @@ export function TrimEditor({
             </button>
           )}
           <button
-            onClick={handleConfirm}
+            onClick={handleOverwrite}
+            disabled={exporting || !hasChanges || keptDuration < 0.2}
+            className="btn-secondary"
+            title={
+              !hasChanges
+                ? 'Není co stříhat — pohni úchyty nebo přidej výřez'
+                : 'Přepsat původní nahrávku střihem (nevratné)'
+            }
+          >
+            <Save className="w-4 h-4" /> Uložit změny
+          </button>
+          <button
+            onClick={handleSaveAsNew}
             disabled={exporting || !hasChanges || keptDuration < 0.2}
             className="btn-primary"
             title={
               !hasChanges
                 ? 'Není co stříhat — pohni úchyty nebo přidej výřez'
-                : 'Uložit jako novou nahrávku'
+                : 'Uložit jako novou nahrávku, originál zůstane'
             }
           >
-            <Check className="w-4 h-4" /> Uložit střih jako novou
+            <Check className="w-4 h-4" /> Uložit jako novou
           </button>
         </div>
       </div>

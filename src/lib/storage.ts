@@ -105,6 +105,30 @@ export async function renameRecording(id: string, name: string): Promise<void> {
   await req(store.put(rec));
 }
 
+/**
+ * Overwrites a recording's content in place ("Uložit změny" in the trim
+ * editor). Clears uploadedUrl — the old CDN copy no longer matches.
+ */
+export async function replaceRecordingBlob(
+  id: string,
+  input: { blob: Blob; mimeType: string; durationMs: number }
+): Promise<StoredRecording | null> {
+  const store = await tx('readwrite');
+  const rec = await req<StoredRecording | undefined>(store.get(id));
+  if (!rec) return null;
+  rec.blob = input.blob;
+  rec.size = input.blob.size;
+  rec.mimeType = input.mimeType;
+  rec.durationMs = input.durationMs;
+  // Keep the base name, fix the extension to match the new content.
+  const ext = input.mimeType.includes('mp4') ? 'mp4' : 'webm';
+  rec.name = rec.name.replace(/\.[^.]+$/, '') + '.' + ext;
+  rec.uploadedUrl = undefined;
+  rec.uploadedAt = undefined;
+  await req(store.put(rec));
+  return rec;
+}
+
 export async function setUploadedUrl(
   id: string,
   uploadedUrl: string
