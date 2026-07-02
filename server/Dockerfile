@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.6
 FROM node:20-alpine
 
+# Native ffmpeg for server-side WebM→MP4 conversion (10-20x faster than wasm)
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 # Install deps (no devDeps, no audit, no fund noise)

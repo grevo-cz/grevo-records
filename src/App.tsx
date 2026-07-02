@@ -6,6 +6,7 @@ import { Preview } from './components/Preview';
 import { Library } from './components/Library';
 import { Settings } from './components/Settings';
 import { Login } from './components/Login';
+import { RecoveryBanner } from './components/RecoveryBanner';
 import { currentSession, logout as authLogout, type Session } from './lib/auth';
 import type { StoredRecording } from './types';
 
@@ -46,6 +47,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-bg text-text-primary font-sans antialiased">
+      {/* Crash recovery: orphaned chunks from a recording that died with the tab */}
+      {view !== 'recording' && <RecoveryBanner onRecovered={refreshLibrary} />}
       {view !== 'recording' && (
         <Sidebar
           view={view}

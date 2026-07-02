@@ -6,8 +6,11 @@ import type { StoredRecording } from '../types';
 import { currentSession } from './auth';
 
 const DB_NAME = 'video-recorder';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'recordings';
+// Live recording buffer — chunks are appended here every ~1 s while recording
+// so a tab/browser crash never loses more than the last second.
+const BUFFER_STORE = 'recording-buffer';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -17,9 +20,18 @@ function openDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // v1: recordings store — MUST be preserved on upgrade (create only if missing)
       if (!db.objectStoreNames.contains(STORE)) {
         const os = db.createObjectStore(STORE, { keyPath: 'id' });
         os.createIndex('createdAt', 'createdAt');
+      }
+      // v2: crash-safe live-recording chunk buffer
+      if (!db.objectStoreNames.contains(BUFFER_STORE)) {
+        const os = db.createObjectStore(BUFFER_STORE, {
+          keyPath: 'id',
+          autoIncrement: true,
+        });
+        os.createIndex('sessionId', 'sessionId');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -30,6 +42,12 @@ function openDb(): Promise<IDBDatabase> {
 
 function tx(mode: IDBTransactionMode) {
   return openDb().then((db) => db.transaction(STORE, mode).objectStore(STORE));
+}
+
+function bufferTx(mode: IDBTransactionMode) {
+  return openDb().then((db) =>
+    db.transaction(BUFFER_STORE, mode).objectStore(BUFFER_STORE)
+  );
 }
 
 function genId() {
@@ -116,4 +134,130 @@ export async function estimateStorage(): Promise<{ usage: number; quota: number 
   if (!navigator.storage?.estimate) return null;
   const { usage = 0, quota = 0 } = await navigator.storage.estimate();
   return { usage, quota };
+}
+
+// ─────────────────── Crash-safe recording buffer ───────────────────
+// While a recording is live, every MediaRecorder chunk is appended here.
+// On a clean stop the session is assembled into one Blob and deleted.
+// If the tab/browser dies, the chunks survive and can be recovered on
+// next app start (see listBufferSessions / recoverBufferSession).
+
+export interface BufferChunkRecord {
+  id?: number; // autoincrement
+  sessionId: string;
+  seq: number;
+  mimeType: string;
+  createdAt: number;
+  chunk: Blob;
+}
+
+export interface BufferSessionInfo {
+  sessionId: string;
+  chunkCount: number;
+  totalBytes: number;
+  mimeType: string;
+  /** createdAt of the newest chunk — used to skip sessions that are still live. */
+  lastChunkAt: number;
+  firstChunkAt: number;
+}
+
+export async function appendBufferChunk(input: {
+  sessionId: string;
+  seq: number;
+  mimeType: string;
+  chunk: Blob;
+}): Promise<void> {
+  const store = await bufferTx('readwrite');
+  await req(
+    store.add({
+      sessionId: input.sessionId,
+      seq: input.seq,
+      mimeType: input.mimeType,
+      createdAt: Date.now(),
+      chunk: input.chunk,
+    } satisfies BufferChunkRecord)
+  );
+}
+
+/** All chunk rows of a session, ordered by seq (exposed for the recorder's merge logic). */
+export async function readBufferChunks(
+  sessionId: string
+): Promise<BufferChunkRecord[]> {
+  const store = await bufferTx('readonly');
+  const index = store.index('sessionId');
+  const rows = await req<BufferChunkRecord[]>(index.getAll(sessionId));
+  return rows.sort((a, b) => a.seq - b.seq);
+}
+
+/** Reads all chunks of a session, ordered by seq. */
+export async function readBufferSession(
+  sessionId: string
+): Promise<{ chunks: Blob[]; mimeType: string } | null> {
+  const rows = await readBufferChunks(sessionId);
+  if (rows.length === 0) return null;
+  return {
+    chunks: rows.map((r) => r.chunk),
+    mimeType: rows[0].mimeType || 'video/webm',
+  };
+}
+
+export async function deleteBufferSession(sessionId: string): Promise<void> {
+  const store = await bufferTx('readwrite');
+  const index = store.index('sessionId');
+  const keys = await req<IDBValidKey[]>(index.getAllKeys(sessionId));
+  for (const key of keys) {
+    await req(store.delete(key));
+  }
+}
+
+/** Summarizes all sessions present in the buffer (for crash recovery). */
+export async function listBufferSessions(): Promise<BufferSessionInfo[]> {
+  const store = await bufferTx('readonly');
+  const rows = await req<BufferChunkRecord[]>(store.getAll());
+  const bySession = new Map<string, BufferSessionInfo>();
+  for (const r of rows) {
+    const info = bySession.get(r.sessionId);
+    if (!info) {
+      bySession.set(r.sessionId, {
+        sessionId: r.sessionId,
+        chunkCount: 1,
+        totalBytes: r.chunk?.size ?? 0,
+        mimeType: r.mimeType || 'video/webm',
+        lastChunkAt: r.createdAt,
+        firstChunkAt: r.createdAt,
+      });
+    } else {
+      info.chunkCount += 1;
+      info.totalBytes += r.chunk?.size ?? 0;
+      info.lastChunkAt = Math.max(info.lastChunkAt, r.createdAt);
+      info.firstChunkAt = Math.min(info.firstChunkAt, r.createdAt);
+    }
+  }
+  return [...bySession.values()].sort((a, b) => a.firstChunkAt - b.firstChunkAt);
+}
+
+/**
+ * Assembles an orphaned buffer session into a library recording,
+ * then deletes the buffer. Returns null if the session vanished.
+ */
+export async function recoverBufferSession(
+  sessionId: string
+): Promise<StoredRecording | null> {
+  const data = await readBufferSession(sessionId);
+  if (!data || data.chunks.length === 0) return null;
+  const blob = new Blob(data.chunks, { type: data.mimeType });
+  const ext = data.mimeType.includes('mp4') ? 'mp4' : 'webm';
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const name = `recovered-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+    d.getDate()
+  )}_${pad(d.getHours())}-${pad(d.getMinutes())}.${ext}`;
+  const rec = await saveRecording({
+    blob,
+    name,
+    durationMs: 0, // unknown — the recorder died before reporting
+    mimeType: data.mimeType,
+  });
+  await deleteBufferSession(sessionId);
+  return rec;
 }

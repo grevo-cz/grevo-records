@@ -4,9 +4,26 @@ import { PROXY_URL, UPLOAD_SECRET } from './proxy-config';
 export interface UploadResult {
   url: string;
   storagePath: string;
+  /**
+   * True when the server converted the WebM to MP4 (proxy with convert
+   * support). Undefined/false when the file was stored as-is — if you
+   * requested convert and this is falsy, the proxy is outdated.
+   */
+  converted?: boolean;
 }
 
 export type UploadProgress = (loaded: number, total: number, pct: number) => void;
+
+/**
+ * WebM recordings at/above this size skip the in-browser ffmpeg.wasm
+ * conversion (slow, 2 GB hard limit) — they are stored as WebM and the
+ * proxy converts them to MP4 natively during upload (&convert=mp4).
+ */
+export const SERVER_CONVERT_THRESHOLD_BYTES = 150 * 1024 * 1024;
+
+export function isWebmMime(mimeType: string): boolean {
+  return /webm/i.test(mimeType);
+}
 
 /**
  * Uploads a recording blob to the team upload proxy.
@@ -18,6 +35,12 @@ export interface UploadOptions {
   maxRetries?: number;
   /** Called once after each failed attempt before retry. */
   onRetry?: (attempt: number, reason: string) => void;
+  /**
+   * Ask the proxy to convert WebM → MP4 server-side (native ffmpeg).
+   * Adds &convert=mp4 to the upload URL. Old proxies ignore it and store
+   * the file as-is (check `converted` in the result).
+   */
+  convert?: boolean;
 }
 
 class UploadError extends Error {
@@ -29,7 +52,8 @@ class UploadError extends Error {
 function singleUploadAttempt(
   blob: Blob,
   filename: string,
-  onProgress?: UploadProgress
+  onProgress?: UploadProgress,
+  convert?: boolean
 ): Promise<UploadResult> {
   const s = loadBunnySettings();
   if (!s.enabled) {
@@ -42,7 +66,8 @@ function singleUploadAttempt(
   const base = PROXY_URL.replace(/\/+$/, '');
   const url =
     `${base}/upload?name=${encodeURIComponent(filename)}` +
-    `&folder=${encodeURIComponent(s.folder)}`;
+    `&folder=${encodeURIComponent(s.folder)}` +
+    (convert ? '&convert=mp4' : '');
 
   return new Promise<UploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -68,7 +93,11 @@ function singleUploadAttempt(
         data = JSON.parse(xhr.responseText);
       } catch {}
       if (xhr.status >= 200 && xhr.status < 300 && data?.ok) {
-        resolve({ url: data.url, storagePath: data.storagePath });
+        resolve({
+          url: data.url,
+          storagePath: data.storagePath,
+          converted: data.converted === true,
+        });
       } else {
         const transient = xhr.status === 0 || xhr.status >= 500;
         reject(
@@ -102,7 +131,7 @@ export async function uploadToBunny(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      return await singleUploadAttempt(blob, filename, onProgress);
+      return await singleUploadAttempt(blob, filename, onProgress, options.convert);
     } catch (err) {
       const e = err as UploadError;
       const isTransient = e instanceof UploadError ? e.transient : false;

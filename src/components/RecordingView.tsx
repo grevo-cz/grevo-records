@@ -3,10 +3,15 @@ import { Pause, Play, Square, X, Loader2 } from 'lucide-react';
 import { useRecorder } from '../hooks/useRecorder';
 import { LivePreview } from './LivePreview';
 import { formatDuration } from '../lib/format';
+import { formatBytes } from '../lib/format';
 import { saveRecording, setUploadedUrl } from '../lib/storage';
 import { convertToMp4 } from '../lib/ffmpeg';
 import { loadBunnySettings, isBunnyConfigured } from '../lib/settings';
-import { uploadToBunny } from '../lib/upload';
+import {
+  uploadToBunny,
+  isWebmMime,
+  SERVER_CONVERT_THRESHOLD_BYTES,
+} from '../lib/upload';
 import { toast } from '../lib/toast';
 import type { StoredRecording } from '../types';
 
@@ -28,7 +33,7 @@ type SavingStage =
   | { kind: 'loading-ffmpeg'; pct: number }
   | { kind: 'converting'; pct: number }
   | { kind: 'saving' }
-  | { kind: 'uploading'; pct: number };
+  | { kind: 'uploading'; pct: number; serverConverting?: boolean };
 
 function defaultName(): string {
   const d = new Date();
@@ -41,16 +46,19 @@ function defaultName(): string {
 export function RecordingView({ onFinish, onCancel }: Props) {
   const recorder = useRecorder();
   const [stage, setStage] = useState<SavingStage>({ kind: 'idle' });
-  const [started, setStarted] = useState(false);
+  // Synchronous ref guard — a state guard is NOT StrictMode-safe: both
+  // dev double-effect invocations read the pre-update state and start()
+  // would run twice, leaving an orphaned recorder writing chunks forever.
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    if (started) return;
+    if (startedRef.current) return;
     const raw = sessionStorage.getItem('vr-start');
     if (!raw) {
       onCancel();
       return;
     }
-    setStarted(true);
+    startedRef.current = true;
     const cfg = JSON.parse(raw) as StartConfig;
     recorder.start(cfg).catch((err) => {
       const name = err?.name as string | undefined;
@@ -76,7 +84,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       onCancel();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started]);
+  }, []);
 
   const processResult = async (result: {
     blob: Blob;
@@ -88,18 +96,30 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       let finalMime = result.mimeType;
       let finalExt = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
 
-      // If recorder already produced MP4 (Chrome 126+), skip ffmpeg entirely.
+      // Conversion routing:
+      // - native MP4 (Chrome 126+): nothing to do
+      // - WebM < 150 MB: in-browser ffmpeg.wasm (works offline, fast enough)
+      // - WebM >= 150 MB (long recordings): SKIP browser conversion — slow and
+      //   capped at 2 GB. Store WebM locally; the upload proxy converts to MP4
+      //   natively during upload (&convert=mp4).
       if (!result.mimeType.includes('mp4')) {
-        const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
-          if (stageName === 'loading') {
-            setStage({ kind: 'loading-ffmpeg', pct });
-          } else {
-            setStage({ kind: 'converting', pct });
-          }
-        });
-        finalBlob = mp4;
-        finalMime = 'video/mp4';
-        finalExt = 'mp4';
+        if (result.blob.size < SERVER_CONVERT_THRESHOLD_BYTES) {
+          const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
+            if (stageName === 'loading') {
+              setStage({ kind: 'loading-ffmpeg', pct });
+            } else {
+              setStage({ kind: 'converting', pct });
+            }
+          });
+          finalBlob = mp4;
+          finalMime = 'video/mp4';
+          finalExt = 'mp4';
+        } else {
+          toast.info(
+            'Dlouhé video — MP4 konverze proběhne na serveru při nahrání na Bunny.',
+            { title: 'MP4 konverze', duration: 7000 }
+          );
+        }
       }
 
       setStage({ kind: 'saving' });
@@ -114,9 +134,22 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       if (settings.autoUpload && isBunnyConfigured(settings)) {
         try {
           setStage({ kind: 'uploading', pct: 0 });
+          // WebM → ask the proxy to convert to MP4 server-side.
+          const wantConvert = isWebmMime(rec.mimeType);
           const up = await uploadToBunny(rec.blob, rec.name, (_l, _t, pct) =>
-            setStage({ kind: 'uploading', pct })
-          );
+            setStage({
+              kind: 'uploading',
+              pct,
+              // Upload phase done but XHR still waiting → server is converting.
+              serverConverting: wantConvert && pct >= 100,
+            })
+          , { convert: wantConvert });
+          if (wantConvert && !up.converted) {
+            toast.warning(
+              'Upload proxy nepodporuje serverovou konverzi — na Bunny je WebM. Aktualizuj proxy pro MP4.',
+              { title: 'MP4 konverze', duration: 8000 }
+            );
+          }
           const updated = await setUploadedUrl(rec.id, up.url);
           if (updated) rec = updated;
         } catch (uploadErr) {
@@ -229,6 +262,13 @@ export function RecordingView({ onFinish, onCancel }: Props) {
             <span className="font-mono text-base tabular-nums tracking-tight">
               {formatDuration(seconds)}
             </span>
+            <div className="w-px h-4 bg-bg-border" />
+            <span
+              className="font-mono text-xs tabular-nums text-text-secondary"
+              title="Velikost dosud nahraného záznamu"
+            >
+              {formatBytes(recorder.recordedBytes)}
+            </span>
           </div>
         </div>
       )}
@@ -267,7 +307,10 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                 {stage.kind === 'loading-ffmpeg' && 'Připravuji konvertor…'}
                 {stage.kind === 'converting' && 'Konvertuji do MP4…'}
                 {stage.kind === 'saving' && 'Ukládám…'}
-                {stage.kind === 'uploading' && 'Nahrávám na Bunny…'}
+                {stage.kind === 'uploading' &&
+                  (stage.serverConverting
+                    ? 'Server konvertuje video…'
+                    : 'Nahrávám na Bunny…')}
               </div>
               {(stage.kind === 'loading-ffmpeg' ||
                 stage.kind === 'converting' ||
@@ -290,7 +333,9 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                   : stage.kind === 'converting'
                   ? 'Konverze běží lokálně v prohlížeči, nic se neposílá ven.'
                   : stage.kind === 'uploading'
-                  ? 'Streamuji video přes upload proxy do Bunny Storage…'
+                  ? stage.serverConverting
+                    ? 'Upload hotov — server převádí WebM na MP4 (velká videa = několik minut). Nezavírej okno.'
+                    : 'Streamuji video přes upload proxy do Bunny Storage…'
                   : 'Ukládám do knihovny…'}
               </p>
             </div>
@@ -322,6 +367,14 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                   ? `-${recorder.countdownRemaining}s`
                   : formatDuration(seconds)}
               </span>
+              {isLive && (
+                <span
+                  className="font-mono text-[10px] tabular-nums text-text-muted"
+                  title="Velikost dosud nahraného záznamu"
+                >
+                  {formatBytes(recorder.recordedBytes)}
+                </span>
+              )}
             </div>
             <div className="w-px h-6 bg-bg-border" />
             {recorder.state === 'paused' ? (

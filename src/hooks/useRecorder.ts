@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from '../lib/toast';
+import {
+  appendBufferChunk,
+  deleteBufferSession,
+  readBufferChunks,
+} from '../lib/storage';
 
 export type RecorderState =
   | 'idle'
@@ -30,6 +35,8 @@ interface StopResult {
 interface UseRecorderReturn {
   state: RecorderState;
   elapsedMs: number;
+  /** Total bytes captured so far in the live recording (buffer size indicator). */
+  recordedBytes: number;
   countdownRemaining: number;
   cameraStream: MediaStream | null;
   displayStream: MediaStream | null;
@@ -113,12 +120,20 @@ export function useRecorder(): UseRecorderReturn {
   const [state, setState] = useState<RecorderState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [recordedBytes, setRecordedBytes] = useState(0);
   const [countdownRemaining, setCountdownRemaining] = useState(0);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [displayStream, setDisplayStream] = useState<MediaStream | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  // RAM fallback ONLY for chunks whose IndexedDB write failed (quota/private
+  // mode). Normally all chunks live in the 'recording-buffer' IDB store so a
+  // crashed tab never loses the recording.
+  const fallbackChunksRef = useRef<{ seq: number; chunk: Blob }[]>([]);
+  const sessionIdRef = useRef<string>('');
+  const pendingWritesRef = useRef<Set<Promise<void>>>(new Set());
+  const idbWarnedRef = useRef(false);
+  const bytesRef = useRef(0);
   const displayStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -133,6 +148,8 @@ export function useRecorder(): UseRecorderReturn {
   const countdownResolveRef = useRef<(() => void) | null>(null);
   const resolveStopRef = useRef<((v: StopResult | null) => void) | null>(null);
   const cancelledRef = useRef(false);
+  // True from start() entry until the session terminally ends (idle/autostopped).
+  const startBusyRef = useRef(false);
   const recorderErrorRef = useRef(false);
   const retriedWebmRef = useRef(false);
   const autoResultRef = useRef<StopResult | null>(null);
@@ -180,6 +197,14 @@ export function useRecorder(): UseRecorderReturn {
       micGain,
       countdownSeconds,
     }: StartOptions) => {
+      // Idempotency guard (synchronous ref): a second start() while one is
+      // in flight would overwrite stream/recorder refs and orphan the first
+      // recorder, which then keeps writing chunks forever.
+      if (startBusyRef.current) {
+        console.warn('[recorder] start() ignored — another start is in flight');
+        return;
+      }
+      startBusyRef.current = true;
       setError(null);
       cancelledRef.current = false;
       recorderErrorRef.current = false;
@@ -197,6 +222,7 @@ export function useRecorder(): UseRecorderReturn {
 
         if (cancelledRef.current) {
           stopAllStreams();
+          startBusyRef.current = false;
           return;
         }
 
@@ -321,6 +347,7 @@ export function useRecorder(): UseRecorderReturn {
           if (cancelledRef.current) {
             stopAllStreams();
             setState('idle');
+            startBusyRef.current = false;
             return;
           }
         }
@@ -331,14 +358,50 @@ export function useRecorder(): UseRecorderReturn {
           stopTimer();
           stopAllStreams();
           setState(st);
+          startBusyRef.current = false;
         };
 
         const armAndStart = (candidates: string[]) => {
           const { recorder, mimeType } = createRecorder(combined, candidates);
-          chunksRef.current = [];
+          const effectiveMime = mimeType || 'video/webm';
+
+          // Fresh crash-safe buffer session for this recorder instance.
+          const sessionId =
+            Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+          sessionIdRef.current = sessionId;
+          fallbackChunksRef.current = [];
+          pendingWritesRef.current = new Set();
+          idbWarnedRef.current = false;
+          bytesRef.current = 0;
+          setRecordedBytes(0);
+          let seq = 0;
 
           recorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+            if (!e.data || e.data.size === 0) return;
+            const mySeq = seq++;
+            const chunk = e.data;
+            bytesRef.current += chunk.size;
+            setRecordedBytes(bytesRef.current);
+            // Persist to IndexedDB immediately (fire-and-forget). A tab crash
+            // then loses at most the last ~1 s. On IDB failure fall back to RAM
+            // so the recording itself never dies because of storage.
+            const p = appendBufferChunk({
+              sessionId,
+              seq: mySeq,
+              mimeType: effectiveMime,
+              chunk,
+            }).catch((err) => {
+              fallbackChunksRef.current.push({ seq: mySeq, chunk });
+              if (!idbWarnedRef.current) {
+                idbWarnedRef.current = true;
+                console.error(
+                  '[recorder] IndexedDB chunk write failed — falling back to RAM buffering:',
+                  err
+                );
+              }
+            });
+            pendingWritesRef.current.add(p);
+            p.finally(() => pendingWritesRef.current.delete(p));
           };
 
           recorder.onerror = (ev) => {
@@ -352,10 +415,35 @@ export function useRecorder(): UseRecorderReturn {
             }
           };
 
+          // Reassemble the recording from the IDB buffer (+ any RAM-fallback
+          // chunks), ordered by seq. Never throws — worst case returns only
+          // the RAM chunks.
+          const assembleBlob = async (): Promise<Blob> => {
+            // Let in-flight chunk writes settle first.
+            await Promise.allSettled([...pendingWritesRef.current]);
+            let idbRows: { seq: number; chunk: Blob }[] = [];
+            try {
+              idbRows = await readBufferChunks(sessionId);
+            } catch (err) {
+              console.error('[recorder] reading chunk buffer failed:', err);
+            }
+            const all = [...idbRows, ...fallbackChunksRef.current].sort(
+              (a, b) => a.seq - b.seq
+            );
+            fallbackChunksRef.current = [];
+            return new Blob(
+              all.map((r) => r.chunk),
+              { type: effectiveMime }
+            );
+          };
+
+          const clearBuffer = () => {
+            deleteBufferSession(sessionId).catch((err) =>
+              console.warn('[recorder] failed to clear chunk buffer:', err)
+            );
+          };
+
           recorder.onstop = () => {
-            const blob = new Blob(chunksRef.current, {
-              type: mimeType || 'video/webm',
-            });
             const durationMs = Math.max(
               0,
               Date.now() -
@@ -363,51 +451,58 @@ export function useRecorder(): UseRecorderReturn {
                 pausedAccumRef.current -
                 (pausedAtRef.current ? Date.now() - pausedAtRef.current : 0)
             );
-            chunksRef.current = [];
 
-            // a) User pressed our Stop — resolve their await.
-            const resolver = resolveStopRef.current;
-            if (resolver) {
-              finishAll('idle');
-              resolver({ blob, mimeType: mimeType || 'video/webm', durationMs });
-              resolveStopRef.current = null;
-              return;
-            }
-
-            // b) Cancelled — discard.
-            if (cancelledRef.current) {
-              finishAll('idle');
-              return;
-            }
-
-            // c) Recorder errored right after start (typically MP4 muxer
-            //    rejecting the track layout) — retry once with WebM on the
-            //    SAME streams, no new screen picker needed.
-            if (recorderErrorRef.current && !retriedWebmRef.current) {
-              recorderErrorRef.current = false;
-              retriedWebmRef.current = true;
-              const webmOnly = candidates.filter((c) => c.includes('webm'));
-              try {
-                console.warn('[recorder] retrying with WebM after MP4 failure');
-                toast.warning(
-                  'Nahrávání v MP4 selhalo — pokračuji ve WebM. Po uložení můžeš použít „Konvertovat na MP4".',
-                  { title: 'Nahrávání', duration: 6000 }
-                );
-                armAndStart(webmOnly.length ? webmOnly : ['video/webm']);
+            void (async () => {
+              // b) Cancelled — discard everything, no need to assemble.
+              if (cancelledRef.current && !resolveStopRef.current) {
+                clearBuffer();
+                finishAll('idle');
                 return;
-              } catch (e) {
-                console.error('[recorder] WebM retry failed too:', e);
               }
-            }
 
-            // d) Unexpected stop ("Stop sharing" in browser bar, or fatal
-            //    error) — keep the result so the UI can save it.
-            autoResultRef.current = {
-              blob,
-              mimeType: mimeType || 'video/webm',
-              durationMs,
-            };
-            finishAll('autostopped');
+              const blob = await assembleBlob();
+
+              // a) User pressed our Stop — resolve their await.
+              const resolver = resolveStopRef.current;
+              if (resolver) {
+                clearBuffer();
+                finishAll('idle');
+                resolver({ blob, mimeType: effectiveMime, durationMs });
+                resolveStopRef.current = null;
+                return;
+              }
+
+              // c) Recorder errored right after start (typically MP4 muxer
+              //    rejecting the track layout) — retry once with WebM on the
+              //    SAME streams, no new screen picker needed.
+              if (recorderErrorRef.current && !retriedWebmRef.current) {
+                recorderErrorRef.current = false;
+                retriedWebmRef.current = true;
+                clearBuffer();
+                const webmOnly = candidates.filter((c) => c.includes('webm'));
+                try {
+                  console.warn('[recorder] retrying with WebM after MP4 failure');
+                  toast.warning(
+                    'Nahrávání v MP4 selhalo — pokračuji ve WebM. Po uložení můžeš použít „Konvertovat na MP4".',
+                    { title: 'Nahrávání', duration: 6000 }
+                  );
+                  armAndStart(webmOnly.length ? webmOnly : ['video/webm']);
+                  return;
+                } catch (e) {
+                  console.error('[recorder] WebM retry failed too:', e);
+                }
+              }
+
+              // d) Unexpected stop ("Stop sharing" in browser bar, or fatal
+              //    error) — keep the result so the UI can save it.
+              clearBuffer();
+              autoResultRef.current = {
+                blob,
+                mimeType: effectiveMime,
+                durationMs,
+              };
+              finishAll('autostopped');
+            })();
           };
 
           recorderRef.current = recorder;
@@ -436,6 +531,7 @@ export function useRecorder(): UseRecorderReturn {
       } catch (e: any) {
         stopAllStreams();
         setState('idle');
+        startBusyRef.current = false;
         const msg =
           e?.name === 'NotAllowedError'
             ? 'Sdílení obrazovky bylo zrušeno.'
@@ -494,6 +590,7 @@ export function useRecorder(): UseRecorderReturn {
 
   const cancel = useCallback(() => {
     cancelledRef.current = true;
+    startBusyRef.current = false;
     // Release any pending countdown await so the start() async chain unwinds.
     if (countdownResolveRef.current) {
       countdownResolveRef.current();
@@ -501,10 +598,21 @@ export function useRecorder(): UseRecorderReturn {
     }
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') {
-      chunksRef.current = [];
       rec.onstop = null;
       rec.stop();
     }
+    // Discard the crash-safe buffer of the cancelled session (after any
+    // in-flight chunk writes settle, so nothing is re-added afterwards).
+    const sessionId = sessionIdRef.current;
+    if (sessionId) {
+      const pending = [...pendingWritesRef.current];
+      Promise.allSettled(pending).then(() =>
+        deleteBufferSession(sessionId).catch((err) =>
+          console.warn('[recorder] failed to clear chunk buffer on cancel:', err)
+        )
+      );
+    }
+    fallbackChunksRef.current = [];
     stopTimer();
     stopAllStreams();
     setState('idle');
@@ -515,6 +623,7 @@ export function useRecorder(): UseRecorderReturn {
   return {
     state,
     elapsedMs,
+    recordedBytes,
     countdownRemaining,
     cameraStream,
     displayStream,

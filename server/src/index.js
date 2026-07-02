@@ -4,6 +4,12 @@
 
 import express from 'express';
 import https from 'node:https';
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const {
   UPLOAD_SECRET,
@@ -47,6 +53,7 @@ app.get('/', (_req, res) => {
     name: 'records-by-grevo-proxy',
     status: 'ok',
     mode: 'multi-tenant',
+    convert: 'mp4',
     info: 'Send Bunny credentials via headers x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone',
   });
 });
@@ -115,6 +122,160 @@ function sanitizeFolder(input) {
   return cleaned.endsWith('/') ? cleaned : cleaned + '/';
 }
 
+// ────── WebM → MP4 conversion (native ffmpeg) ──────
+const FFMPEG_TIMEOUT_MS = 30 * 60 * 1000; // kill runaway conversions after 30 min
+const CONVERT_REQ_TIMEOUT_MS = 35 * 60 * 1000; // keep the HTTP response alive meanwhile
+
+function runFfmpeg(inPath, outPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y',
+      '-i', inPath,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      outPath,
+    ];
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    let stderr = '';
+    proc.stderr.on('data', (c) => {
+      stderr += c;
+      if (stderr.length > 8192) stderr = stderr.slice(-8192); // keep tail only
+    });
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGKILL');
+    }, FFMPEG_TIMEOUT_MS);
+
+    const fail = (message) => {
+      const err = new Error(message);
+      err.isFfmpeg = true;
+      reject(err);
+    };
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      fail(`ffmpeg spawn failed: ${err.message}`);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) return fail('ffmpeg timed out after 30 minutes (SIGKILL)');
+      if (code === 0) return resolve();
+      fail(`ffmpeg exited with code ${code}: ${stderr.slice(-300)}`);
+    });
+  });
+}
+
+// PUT a local file to Bunny Storage. Resolves { status, body }.
+function putFileToBunny(filePath, size, creds, objectPath, contentType) {
+  return new Promise((resolve, reject) => {
+    const bunnyUrl = `https://${creds.host}/${creds.zone}/${objectPath}`;
+    const proxyReq = https.request(
+      bunnyUrl,
+      {
+        method: 'PUT',
+        headers: {
+          AccessKey: creds.key,
+          'Content-Type': contentType,
+          'Content-Length': size,
+        },
+      },
+      (proxyRes) => {
+        const chunks = [];
+        proxyRes.on('data', (c) => chunks.push(c));
+        proxyRes.on('end', () =>
+          resolve({
+            status: proxyRes.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          })
+        );
+      }
+    );
+    proxyReq.on('error', reject);
+    const rs = fs.createReadStream(filePath);
+    rs.on('error', (err) => {
+      proxyReq.destroy(err);
+      reject(err);
+    });
+    rs.pipe(proxyReq);
+  });
+}
+
+async function handleConvertUpload(req, res, creds, name, folder) {
+  // Express default timeouts would kill a long conversion mid-flight.
+  req.setTimeout(CONVERT_REQ_TIMEOUT_MS);
+  if (typeof res.setTimeout === 'function') res.setTimeout(CONVERT_REQ_TIMEOUT_MS);
+
+  const id = crypto.randomUUID();
+  const inPath = path.join(os.tmpdir(), `rbg-convert-${id}.in`);
+  const outPath = path.join(os.tmpdir(), `rbg-convert-${id}.mp4`);
+  const mp4Name = sanitizeName(name.replace(/\.[^.]*$/, '') + '.mp4');
+  const objectPath = `${folder}${mp4Name}`;
+
+  try {
+    // 1) Stream request body to a temp file (never buffered in RAM)
+    await new Promise((resolve, reject) => {
+      const ws = fs.createWriteStream(inPath);
+      ws.on('finish', resolve);
+      ws.on('error', reject);
+      req.on('error', reject);
+      req.on('aborted', () => {
+        ws.destroy();
+        reject(new Error('Request aborted during upload'));
+      });
+      req.pipe(ws);
+    });
+
+    const inSize = (await fsp.stat(inPath)).size;
+    console.log(`[convert] start name=${name} size=${inSize}`);
+    const t0 = Date.now();
+
+    // 2) Transcode
+    await runFfmpeg(inPath, outPath);
+    console.log(`[convert] done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+    // 3) Stream the MP4 to Bunny Storage
+    const outSize = (await fsp.stat(outPath)).size;
+    const result = await putFileToBunny(outPath, outSize, creds, objectPath, 'video/mp4');
+    if (result.status >= 200 && result.status < 300) {
+      res.json({
+        ok: true,
+        url: `${creds.pull}/${objectPath}`,
+        storagePath: `/${creds.zone}/${objectPath}`,
+        size: outSize,
+        converted: true,
+      });
+    } else {
+      console.warn(`[convert:upload-fail] ${result.status} ${result.body.slice(0, 200)}`);
+      res.status(result.status || 502).json({
+        ok: false,
+        error: `Bunny upload failed: ${result.status}`,
+        details: result.body.slice(0, 500),
+      });
+    }
+  } catch (err) {
+    console.error('[convert:error]', err.message);
+    if (!res.headersSent) {
+      if (err.isFfmpeg) {
+        res.status(500).json({ ok: false, error: `Konverze selhala: ${err.message}`.slice(0, 400) });
+      } else {
+        res.status(502).json({ ok: false, error: err.message });
+      }
+    }
+  } finally {
+    // 4) Always clean up temp files, success or failure
+    await fsp.rm(inPath, { force: true }).catch(() => {});
+    await fsp.rm(outPath, { force: true }).catch(() => {});
+  }
+}
+
 // ────── Upload (streaming PUT to Bunny) ──────
 app.post('/upload', (req, res) => {
   if (!checkSecret(req, res)) return;
@@ -125,6 +286,15 @@ app.post('/upload', (req, res) => {
   const folder = sanitizeFolder(req.query.folder);
   if (!name) {
     return res.status(400).json({ ok: false, error: 'Missing "name" query param' });
+  }
+
+  // Server-side WebM→MP4 conversion — skipped when the body is already MP4
+  const wantsConvert = String(req.query.convert || '').toLowerCase() === 'mp4';
+  const alreadyMp4 =
+    /\.mp4$/i.test(name) ||
+    String(req.headers['content-type'] || '').toLowerCase().startsWith('video/mp4');
+  if (wantsConvert && !alreadyMp4) {
+    return handleConvertUpload(req, res, creds, name, folder);
   }
 
   const objectPath = `${folder}${name}`;

@@ -3,6 +3,8 @@ import { FileVideo, Loader2, CheckCircle2 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { convertToMp4 } from '../lib/ffmpeg';
 import { saveRecording } from '../lib/storage';
+import { SERVER_CONVERT_THRESHOLD_BYTES } from '../lib/upload';
+import { formatBytes } from '../lib/format';
 import { toast } from '../lib/toast';
 
 interface Props {
@@ -33,6 +35,16 @@ export function ConvertMp4Button({ recording, onConverted }: Props) {
   }
 
   const handleConvert = async () => {
+    // Large files: browser ffmpeg.wasm is slow and capped at ~2 GB.
+    // The Bunny upload converts server-side instead — point the user there.
+    if (recording.size >= SERVER_CONVERT_THRESHOLD_BYTES) {
+      toast.info(
+        `Video má ${formatBytes(recording.size)} — konverze v prohlížeči by trvala dlouho. ` +
+          'Použij „Nahrát na Bunny" — server ho zkonvertuje na MP4 sám.',
+        { title: 'Velké video', duration: 9000 }
+      );
+      return;
+    }
     setState({ kind: 'loading', pct: 0 });
     try {
       const mp4 = await convertToMp4(recording.blob, (pct, stage) => {
