@@ -4,7 +4,7 @@ import { useRecorder } from '../hooks/useRecorder';
 import { LivePreview } from './LivePreview';
 import { formatDuration } from '../lib/format';
 import { formatBytes } from '../lib/format';
-import { saveRecording, setUploadedUrl } from '../lib/storage';
+import { saveRecording, setUploadedUrl, deleteRecording } from '../lib/storage';
 import { convertToMp4 } from '../lib/ffmpeg';
 import { loadBunnySettings, isBunnyConfigured } from '../lib/settings';
 import {
@@ -92,28 +92,56 @@ export function RecordingView({ onFinish, onCancel }: Props) {
     durationMs: number;
   }) => {
     try {
-      let finalBlob = result.blob;
-      let finalMime = result.mimeType;
-      let finalExt = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
+      // SAFETY FIRST: persist the raw recording to the library IMMEDIATELY.
+      // Conversion (below) can take minutes for long videos — if the tab
+      // died during it, the recording would be lost. Now the original is on
+      // disk before any conversion begins.
+      setStage({ kind: 'saving' });
+      const isMp4 = result.mimeType.includes('mp4');
+      const origExt = isMp4 ? 'mp4' : 'webm';
+      const baseName = defaultName();
+      let rec = await saveRecording({
+        blob: result.blob,
+        name: `${baseName}.${origExt}`,
+        durationMs: result.durationMs,
+        mimeType: result.mimeType,
+      });
 
       // Conversion routing:
       // - native MP4 (Chrome 126+): nothing to do
       // - WebM < 150 MB: in-browser ffmpeg.wasm (works offline, fast enough)
       // - WebM >= 150 MB (long recordings): SKIP browser conversion — slow and
-      //   capped at 2 GB. Store WebM locally; the upload proxy converts to MP4
+      //   capped at 2 GB. Keep WebM locally; the upload proxy converts to MP4
       //   natively during upload (&convert=mp4).
-      if (!result.mimeType.includes('mp4')) {
+      if (!isMp4) {
         if (result.blob.size < SERVER_CONVERT_THRESHOLD_BYTES) {
-          const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
-            if (stageName === 'loading') {
-              setStage({ kind: 'loading-ffmpeg', pct });
-            } else {
-              setStage({ kind: 'converting', pct });
-            }
-          });
-          finalBlob = mp4;
-          finalMime = 'video/mp4';
-          finalExt = 'mp4';
+          try {
+            const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
+              if (stageName === 'loading') {
+                setStage({ kind: 'loading-ffmpeg', pct });
+              } else {
+                setStage({ kind: 'converting', pct });
+              }
+            });
+            setStage({ kind: 'saving' });
+            const mp4Rec = await saveRecording({
+              blob: mp4,
+              name: `${baseName}.mp4`,
+              durationMs: result.durationMs,
+              mimeType: 'video/mp4',
+            });
+            // MP4 saved — the WebM safety copy is no longer needed.
+            await deleteRecording(rec.id).catch(() => {});
+            rec = mp4Rec;
+          } catch (convErr) {
+            console.warn('Browser conversion failed, keeping WebM:', convErr);
+            toast.warning(
+              'Konverze do MP4 selhala — záznam je bezpečně uložen jako WEBM. ' +
+                'Můžeš zkusit „Konvertovat na MP4" v náhledu, nebo nahrát na Bunny (server zkonvertuje sám). ' +
+                ((convErr as Error).message || ''),
+              { title: 'MP4 konverze', duration: 10000 }
+            );
+          }
         } else {
           toast.info(
             'Dlouhé video — MP4 konverze proběhne na serveru při nahrání na Bunny.',
@@ -121,14 +149,6 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           );
         }
       }
-
-      setStage({ kind: 'saving' });
-      let rec = await saveRecording({
-        blob: finalBlob,
-        name: `${defaultName()}.${finalExt}`,
-        durationMs: result.durationMs,
-        mimeType: finalMime,
-      });
 
       const settings = loadBunnySettings();
       if (settings.autoUpload && isBunnyConfigured(settings)) {
@@ -164,30 +184,17 @@ export function RecordingView({ onFinish, onCancel }: Props) {
 
       onFinish(rec);
     } catch (e) {
-      console.error('Conversion failed, saving original:', e);
+      // The original is saved as the very first step, so reaching this
+      // catch means the initial save itself failed (e.g. storage quota).
+      console.error('Saving recording failed:', e);
       const reason =
-        e instanceof Error && e.message
-          ? e.message
-          : typeof e === 'string'
-          ? e
-          : 'neznámá chyba (zkus refresh)';
-      try {
-        const ext = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const rec = await saveRecording({
-          blob: result.blob,
-          name: `${defaultName()}.${ext}`,
-          durationMs: result.durationMs,
-          mimeType: result.mimeType,
-        });
-        toast.warning(
-          `Konverze do MP4 selhala — uložil jsem ${ext.toUpperCase()}. ` + reason,
-          { title: 'MP4 konverze', duration: 9000 }
-        );
-        onFinish(rec);
-      } catch (saveErr) {
-        console.error(saveErr);
-        onCancel();
-      }
+        e instanceof Error && e.message ? e.message : 'neznámá chyba';
+      toast.error(
+        `Uložení nahrávky selhalo: ${reason}. NEZAVÍREJ tab — zkus uvolnit místo ` +
+          '(smazat staré nahrávky v Knihovně) a stáhnout video přes DevTools.',
+        { title: 'Kritická chyba', duration: 0 }
+      );
+      onCancel();
     } finally {
       setStage({ kind: 'idle' });
     }
@@ -331,7 +338,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                 {stage.kind === 'loading-ffmpeg'
                   ? 'Načítám ffmpeg.wasm (~30 MB). Po prvním načtení cachuje prohlížeč.'
                   : stage.kind === 'converting'
-                  ? 'Konverze běží lokálně v prohlížeči, nic se neposílá ven.'
+                  ? 'Originál je už bezpečně uložen v Knihovně. U nahrávek z prohlížeče se % nemusí zobrazovat (chybí délka v metadatech) — konverze přesto běží, trvá zhruba 1–3× délku videa.'
                   : stage.kind === 'uploading'
                   ? stage.serverConverting
                     ? 'Upload hotov — server převádí WebM na MP4 (velká videa = několik minut). Nezavírej okno.'
