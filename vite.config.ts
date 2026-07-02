@@ -55,6 +55,28 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // v2: bust every cached asset URL. Browsers cached the ffmpeg class
+        // worker chunk (same content hash across builds) from before COEP
+        // headers existed — immutable+1y means they never revalidate, and a
+        // COEP-less cached worker script is refused by the isolated document.
+        entryFileNames: 'assets/v2/[name]-[hash].js',
+        chunkFileNames: 'assets/v2/[name]-[hash].js',
+        assetFileNames: 'assets/v2/[name]-[hash][extname]',
+      },
+    },
+  },
+  worker: {
+    // The ffmpeg class worker is emitted through this separate pipeline —
+    // it MUST move to v2 too (it's the chunk browsers cached without COEP).
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/v2/[name]-[hash].js',
+        chunkFileNames: 'assets/v2/[name]-[hash].js',
+        assetFileNames: 'assets/v2/[name]-[hash][extname]',
+      },
+    },
   },
   server: {
     port: 5173,
