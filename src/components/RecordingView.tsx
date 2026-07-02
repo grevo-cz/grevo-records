@@ -109,11 +109,20 @@ export function RecordingView({ onFinish, onCancel }: Props) {
 
       // Conversion routing:
       // - native MP4 (Chrome 126+): nothing to do
-      // - WebM < 150 MB: in-browser ffmpeg.wasm (works offline, fast enough)
-      // - WebM >= 150 MB (long recordings): SKIP browser conversion — slow and
-      //   capped at 2 GB. Keep WebM locally; the upload proxy converts to MP4
-      //   natively during upload (&convert=mp4).
-      if (!isMp4) {
+      // - WebM + Bunny configured: SKIP browser conversion entirely — the
+      //   proxy converts natively during upload (&convert=mp4) in seconds.
+      //   Browser-side wasm is single-threaded; decoding VP9 at hi-res screen
+      //   resolutions runs 10-30x slower than realtime (user: 20s video took
+      //   10+ minutes). Server does the same job in seconds.
+      // - WebM without Bunny (offline): in-browser ffmpeg.wasm for files
+      //   < 150 MB — the only available path to MP4.
+      const bunnyReady = isBunnyConfigured();
+      if (!isMp4 && bunnyReady) {
+        toast.info(
+          'Uloženo jako WebM. Při nahrání na Bunny server vytvoří MP4 (trvá sekundy).',
+          { title: 'MP4 konverze', duration: 7000 }
+        );
+      } else if (!isMp4) {
         if (result.blob.size < SERVER_CONVERT_THRESHOLD_BYTES) {
           try {
             const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
