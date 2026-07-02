@@ -48,7 +48,18 @@ async function loadCore(
   const workerURL = mt
     ? await toBlobURL(`${base}/ffmpeg-core.worker.js`, 'text/javascript')
     : undefined;
-  await ffmpeg.load({ coreURL, wasmURL, workerURL });
+  // load() hangs forever if the worker is silently blocked (e.g. COEP
+  // mismatch on the worker script) — cap it so the failure is visible
+  // and the ST fallback can kick in.
+  await Promise.race([
+    ffmpeg.load({ coreURL, wasmURL, workerURL }),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`ffmpeg ${mt ? 'MT' : 'ST'} load timeout (60 s)`)),
+        60_000
+      )
+    ),
+  ]);
   onProgress?.(100, 'loading');
 }
 
