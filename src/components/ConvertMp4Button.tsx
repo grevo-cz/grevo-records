@@ -40,17 +40,21 @@ export function ConvertMp4Button({ recording, onConverted }: Props) {
     if (recording.size >= SERVER_CONVERT_THRESHOLD_BYTES) {
       toast.info(
         `Video má ${formatBytes(recording.size)} — konverze v prohlížeči by trvala dlouho. ` +
-          'Použij „Nahrát na Bunny" — server ho zkonvertuje na MP4 sám.',
+          'Použij „Nahrát na Bunny", server ho zkonvertuje na MP4 sám.',
         { title: 'Velké video', duration: 9000 }
       );
       return;
     }
     setState({ kind: 'loading', pct: 0 });
     try {
-      const mp4 = await convertToMp4(recording.blob, (pct, stage) => {
-        if (stage === 'loading') setState({ kind: 'loading', pct });
-        else setState({ kind: 'converting', pct });
-      });
+      const mp4 = await convertToMp4(
+        recording.blob,
+        (pct, stage) => {
+          if (stage === 'loading') setState({ kind: 'loading', pct });
+          else setState({ kind: 'converting', pct });
+        },
+        recording.durationMs ? recording.durationMs / 1000 : undefined
+      );
       const base = recording.name.replace(/\.[^.]+$/, '');
       const rec = await saveRecording({
         blob: mp4,
@@ -59,7 +63,7 @@ export function ConvertMp4Button({ recording, onConverted }: Props) {
         mimeType: 'video/mp4',
       });
       setState({ kind: 'done' });
-      toast.success('Hotovo — uložena nová MP4 verze.');
+      toast.success('Hotovo. Uložena nová MP4 verze.');
       onConverted?.(rec);
     } catch (e) {
       setState({ kind: 'idle' });

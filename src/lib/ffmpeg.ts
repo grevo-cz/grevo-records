@@ -113,18 +113,30 @@ export function preloadFFmpeg(): void {
 
 /**
  * Converts a WebM blob to MP4 (H.264 + AAC) entirely in the browser.
- * With the MT core and VFR fix this runs near-realtime for screen content.
+ * With the MT core and CFR fix this runs near-realtime for screen content.
+ *
+ * `durationSec` (the known clip length) is used to compute a real, advancing
+ * progress %. MediaRecorder WebM has no duration in its header, so ffmpeg's
+ * own `progress` ratio stays pinned at 0 until the very end — the bar looks
+ * frozen. We derive % from the processed-output timestamp instead.
  */
 export async function convertToMp4(
   source: Blob,
-  onProgress?: ConvertProgress
+  onProgress?: ConvertProgress,
+  durationSec?: number
 ): Promise<Blob> {
   const ffmpeg = await getFFmpeg(onProgress);
 
-  const handleProgress = ({ progress }: { progress: number }) => {
-    if (onProgress) {
-      onProgress(Math.min(99, Math.max(0, progress * 100)), 'converting');
-    }
+  const handleProgress = ({ progress, time }: { progress: number; time: number }) => {
+    if (!onProgress) return;
+    // `time` is the processed output position in microseconds. With a known
+    // duration this gives a smooth, honest bar; otherwise fall back to
+    // ffmpeg's ratio (often 0 for header-less WebM).
+    const pct =
+      durationSec && durationSec > 0
+        ? (time / 1_000_000 / durationSec) * 100
+        : progress * 100;
+    onProgress(Math.min(99, Math.max(0, pct)), 'converting');
   };
   ffmpeg.on('progress', handleProgress);
 
@@ -197,9 +209,16 @@ export async function trimToMp4(
   if (segments.length === 0) throw new Error('Nezbyly žádné úseky k uložení.');
   const rate = Math.max(0.5, Math.min(2, playbackRate || 1));
 
+  // Known output length = sum of kept segments, scaled by speed. Drives a
+  // real progress bar (header-less WebM leaves ffmpeg's own ratio at 0).
+  const outDurSec =
+    segments.reduce((acc, s) => acc + Math.max(0, s.end - s.start), 0) / rate;
+
   const ffmpeg = await getFFmpeg(onProgress);
-  const handleProgress = ({ progress }: { progress: number }) => {
-    onProgress?.(Math.min(99, Math.max(0, progress * 100)), 'converting');
+  const handleProgress = ({ progress, time }: { progress: number; time: number }) => {
+    const pct =
+      outDurSec > 0 ? (time / 1_000_000 / outDurSec) * 100 : progress * 100;
+    onProgress?.(Math.min(99, Math.max(0, pct)), 'converting');
   };
   ffmpeg.on('progress', handleProgress);
 

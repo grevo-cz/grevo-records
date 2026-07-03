@@ -131,13 +131,17 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       } else if (!isMp4) {
         if (result.blob.size < SERVER_CONVERT_THRESHOLD_BYTES) {
           try {
-            const mp4 = await convertToMp4(result.blob, (pct, stageName) => {
-              if (stageName === 'loading') {
-                setStage({ kind: 'loading-ffmpeg', pct });
-              } else {
-                setStage({ kind: 'converting', pct });
-              }
-            });
+            const mp4 = await convertToMp4(
+              result.blob,
+              (pct, stageName) => {
+                if (stageName === 'loading') {
+                  setStage({ kind: 'loading-ffmpeg', pct });
+                } else {
+                  setStage({ kind: 'converting', pct });
+                }
+              },
+              result.durationMs ? result.durationMs / 1000 : undefined
+            );
             setStage({ kind: 'saving' });
             const mp4Rec = await saveRecording({
               blob: mp4,
@@ -151,7 +155,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           } catch (convErr) {
             console.warn('Browser conversion failed, keeping WebM:', convErr);
             toast.warning(
-              'Konverze do MP4 selhala — záznam je bezpečně uložen jako WEBM. ' +
+              'Konverze do MP4 selhala. Záznam je bezpečně uložen jako WEBM. ' +
                 'Můžeš zkusit „Konvertovat na MP4" v náhledu, nebo nahrát na Bunny (server zkonvertuje sám). ' +
                 ((convErr as Error).message || ''),
               { title: 'MP4 konverze', duration: 10000 }
@@ -159,7 +163,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           }
         } else {
           toast.info(
-            'Dlouhé video — MP4 konverze proběhne na serveru při nahrání na Bunny.',
+            'Dlouhé video: MP4 konverze proběhne na serveru při nahrání na Bunny.',
             { title: 'MP4 konverze', duration: 7000 }
           );
         }
@@ -181,7 +185,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           , { convert: wantConvert });
           if (wantConvert && !up.converted) {
             toast.warning(
-              'Upload proxy nepodporuje serverovou konverzi — na Bunny je WebM. Aktualizuj proxy pro MP4.',
+              'Upload proxy nepodporuje serverovou konverzi, na Bunny je WebM. Aktualizuj proxy pro MP4.',
               { title: 'MP4 konverze', duration: 8000 }
             );
           }
@@ -190,7 +194,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
         } catch (uploadErr) {
           console.warn('Auto-upload failed:', uploadErr);
           toast.warning(
-            'Auto-upload na Bunny selhal — záznam je uložen lokálně. ' +
+            'Auto-upload na Bunny selhal. Záznam je uložen lokálně. ' +
               (uploadErr as Error).message,
             { title: 'Upload', duration: 8000 }
           );
@@ -353,10 +357,10 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                 {stage.kind === 'loading-ffmpeg'
                   ? 'Načítám ffmpeg.wasm (~30 MB). Po prvním načtení cachuje prohlížeč.'
                   : stage.kind === 'converting'
-                  ? 'Originál je už bezpečně uložen v Knihovně. U nahrávek z prohlížeče se % nemusí zobrazovat (chybí délka v metadatech) — konverze přesto běží, trvá zhruba 1–3× délku videa.'
+                  ? 'Originál je už bezpečně uložen v Knihovně. U nahrávek z prohlížeče se % nemusí zobrazovat (chybí délka v metadatech). Konverze přesto běží, trvá zhruba 1-3x délku videa.'
                   : stage.kind === 'uploading'
                   ? stage.serverConverting
-                    ? 'Upload hotov — server převádí WebM na MP4 (velká videa = několik minut). Nezavírej okno.'
+                    ? 'Upload hotov, server převádí WebM na MP4 (velká videa = několik minut). Nezavírej okno.'
                     : 'Streamuji video přes upload proxy do Bunny Storage…'
                   : 'Ukládám do knihovny…'}
               </p>
