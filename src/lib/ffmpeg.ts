@@ -6,9 +6,10 @@
 // - /ffmpeg-st → single-threaded fallback when isolation is unavailable.
 //
 // Critical encode flags (learned the hard way):
-// - `-fps_mode vfr`  — MediaRecorder WebM reports a bogus 1000 fps nominal
-//   rate; without VFR, ffmpeg CFR-duplicates frames and a 20 s clip takes
-//   10+ minutes to encode.
+// - `-vf fps=30`     — MediaRecorder WebM reports a bogus 1000 fps nominal
+//   rate; default CFR duplicated frames (20 s clip → 10+ min encode) and
+//   plain VFR passthrough stuttered in QuickTime/Safari. The fps filter
+//   resamples by real PTS to smooth CFR 30.
 // - `-threads 4|1`   — x264 auto-threading exceeds the wasm pthread pool and
 //   aborts the core; pin explicitly.
 
@@ -134,9 +135,12 @@ export async function convertToMp4(
     await ffmpeg.writeFile(inputName, await fetchFile(source));
     const ret = await ffmpeg.exec([
       '-i', inputName,
-      // Keep source frame timestamps — MediaRecorder/webm inputs report a
-      // bogus 1000 fps nominal rate that would otherwise be CFR-duplicated.
-      '-fps_mode', 'vfr',
+      // MediaRecorder WebM reports a bogus 1000 fps nominal rate; the fps
+      // filter ignores it and resamples by real PTS to smooth CFR 30 —
+      // VFR passthrough made QuickTime/Safari playback stutter.
+      '-vf', 'fps=30',
+      // MediaRecorder audio can drift on long recordings; resample keeps sync.
+      '-af', 'aresample=async=1',
       // x264 auto-threading exceeds the wasm pthread pool and aborts the core.
       '-threads', loadedMt ? '4' : '1',
       '-c:v', 'libx264',
@@ -202,16 +206,32 @@ export async function trimToMp4(
   const inputName = 'trim-in';
   const outputName = 'trim-out.mp4';
 
-  const expr = segments
-    .map((s) => `between(t,${s.start.toFixed(3)},${s.end.toFixed(3)})`)
-    .join('+');
-  const vSetpts = rate === 1 ? 'N/FRAME_RATE/TB' : `(N/FRAME_RATE/TB)/${rate}`;
-  const vf = `[0:v]select='${expr}',setpts=${vSetpts}[v]`;
-  const aTempo = rate === 1 ? '' : `,atempo=${rate}`;
-  const af = `[0:a]aselect='${expr}',asetpts=N/SR/TB${aTempo}[a]`;
+  // Per-segment trim + concat preserves the real frame timestamps inside
+  // each kept segment. The old select+setpts=N/FRAME_RATE/TB re-stamped
+  // frames at the bogus nominal 1000 fps — the whole video track collapsed
+  // to milliseconds while audio kept its length (frozen, stuttering output).
+  // Final fps=30 resamples to CFR for reliable playback everywhere.
+  const seg = (i: number, s: TrimSegment, kind: 'v' | 'a') =>
+    kind === 'v'
+      ? `[0:v]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`
+      : `[0:a]atrim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`;
+  const vPost = `${rate === 1 ? '' : `setpts=PTS/${rate},`}fps=30`;
+
+  const graphAV = [
+    ...segments.map((s, i) => seg(i, s, 'v')),
+    ...segments.map((s, i) => seg(i, s, 'a')),
+    `${segments.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${segments.length}:v=1:a=1[vc][ac]`,
+    `[vc]${vPost}[v]`,
+    `[ac]${rate === 1 ? 'anull' : `atempo=${rate}`}[a]`,
+  ].join(';');
+
+  const graphV = [
+    ...segments.map((s, i) => seg(i, s, 'v')),
+    `${segments.map((_, i) => `[v${i}]`).join('')}concat=n=${segments.length}:v=1:a=0[vc]`,
+    `[vc]${vPost}[v]`,
+  ].join(';');
 
   const commonOut = [
-    '-fps_mode', 'vfr',
     '-threads', loadedMt ? '4' : '1',
     '-c:v', 'libx264',
     '-preset', 'veryfast',
@@ -226,7 +246,7 @@ export async function trimToMp4(
     // audio filter fail — retry video-only.
     let ret = await ffmpeg.exec([
       '-i', inputName,
-      '-filter_complex', `${vf};${af}`,
+      '-filter_complex', graphAV,
       '-map', '[v]', '-map', '[a]',
       ...commonOut,
       '-c:a', 'aac', '-b:a', '128k',
@@ -237,7 +257,7 @@ export async function trimToMp4(
       console.warn('[trim] audio path failed, retrying video-only');
       ret = await ffmpeg.exec([
         '-i', inputName,
-        '-filter_complex', vf,
+        '-filter_complex', graphV,
         '-map', '[v]', '-an',
         ...commonOut,
         '-movflags', '+faststart',
