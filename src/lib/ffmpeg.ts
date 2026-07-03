@@ -156,7 +156,12 @@ export async function convertToMp4(
       // x264 auto-threading exceeds the wasm pthread pool and aborts the core.
       '-threads', loadedMt ? '4' : '1',
       '-c:v', 'libx264',
-      '-preset', 'veryfast',
+      // ultrafast, not veryfast: in wasm the x264 encode dominates and
+      // veryfast ran ~5x slower (19 s / 1440p clip: 20 s vs 3.8 s). For
+      // screen content the quality at crf 23 is indistinguishable; the
+      // only cost is a slightly larger file, which is fine for a local
+      // or uploaded deliverable.
+      '-preset', 'ultrafast',
       '-crf', '23',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
@@ -253,7 +258,9 @@ export async function trimToMp4(
   const commonOut = [
     '-threads', loadedMt ? '4' : '1',
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
+    // ultrafast: x264 encode dominates in wasm; ~5x faster than veryfast
+    // with no visible quality loss on screen content (see convertToMp4).
+    '-preset', 'ultrafast',
     '-crf', '23',
     '-pix_fmt', 'yuv420p',
   ];
