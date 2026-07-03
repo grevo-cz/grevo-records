@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogIn, Loader2, Video } from 'lucide-react';
+import { LogIn, Loader2 } from 'lucide-react';
 import { login, type Session } from '../lib/auth';
 
 interface Props {
@@ -27,22 +27,22 @@ export function Login({ onLogin }: Props) {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-bg p-6">
+    <div className="min-h-[100dvh] w-full flex items-center justify-center bg-bg p-6">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8 animate-fade-in">
-          <div className="w-14 h-14 rounded-2xl bg-accent text-white inline-flex items-center justify-center mb-4 shadow-glow font-bold text-xl tracking-tight">
-            Gr
+        {/* Wordmark — matches the app rail identity */}
+        <div className="mb-8 animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-danger shadow-rec" aria-hidden />
+            <div className="display text-[22px] font-bold leading-none text-text-primary">
+              RECORDS
+            </div>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Records By Grevo</h1>
-          <p className="text-text-secondary text-sm mt-2">
-            Přihlaš se svým firemním účtem.
-          </p>
+          <div className="mt-2 text-sm text-text-secondary">
+            Interní nahrávání obrazovky pro tým Grevo. Přihlaš se firemním účtem.
+          </div>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="card p-6 space-y-4 animate-fade-in"
-        >
+        <form onSubmit={handleSubmit} className="card p-6 space-y-4 animate-fade-in">
           <div>
             <label className="block text-sm font-medium mb-1.5">Email</label>
             <input
@@ -53,7 +53,7 @@ export function Login({ onLogin }: Props) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="input w-full font-mono"
-              placeholder="user@grevo.cz"
+              placeholder="jmeno@grevo.cz"
             />
           </div>
           <div>
@@ -91,8 +91,7 @@ export function Login({ onLogin }: Props) {
         </form>
 
         <p className="text-xs text-text-muted text-center mt-6">
-          <Video className="w-3 h-3 inline mr-1 -mt-0.5" />
-          Interní nástroj pro tým Grevo.
+          by Grevo
         </p>
       </div>
     </div>

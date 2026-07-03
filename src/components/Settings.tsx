@@ -106,7 +106,7 @@ export function Settings() {
               <h2 className="font-semibold">Bunny upload</h2>
               <p className="text-sm text-text-secondary mt-1">
                 Tvoje Access Key se ukládá jen u tebe v prohlížeči. Posílá se
-                přes HTTPS do sdílené proxy, která ho předá Bunny — proxy nic
+                přes HTTPS do sdílené proxy, která ho předá Bunny. Proxy nic
                 neukládá.
               </p>
             </div>
@@ -304,9 +304,10 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
       }`}
     >
       <span
-        className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${
+        className={`absolute top-0.5 w-5 h-5 rounded-full transition-all ${
           on ? 'left-[18px]' : 'left-0.5'
         }`}
+        style={{ background: on ? '#1A1408' : '#6C6772' }}
       />
     </button>
   );

@@ -110,7 +110,7 @@ function singleUploadAttempt(
       }
     };
     xhr.onerror = () =>
-      reject(new UploadError('Síťová chyba — zkontroluj Proxy URL a CORS.', true));
+      reject(new UploadError('Síťová chyba. Zkontroluj Proxy URL a CORS.', true));
     xhr.ontimeout = () => reject(new UploadError('Upload timeout.', true));
     xhr.send(blob);
   });

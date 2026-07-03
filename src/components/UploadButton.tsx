@@ -86,7 +86,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       );
       if (wantConvert && !result.converted) {
         toast.warning(
-          'Upload proxy nepodporuje serverovou konverzi — na Bunny je WebM. Aktualizuj proxy pro MP4.',
+          'Upload proxy nepodporuje serverovou konverzi, na Bunny je WebM. Aktualizuj proxy pro MP4.',
           { title: 'MP4 konverze', duration: 8000 }
         );
       }
@@ -94,7 +94,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       setState({ kind: 'success', url: result.url });
       toast.success(
         wantConvert && result.converted
-          ? 'Video je na Bunny CDN — zkonvertováno do MP4.'
+          ? 'Video je na Bunny CDN, zkonvertováno do MP4.'
           : 'Video je na Bunny CDN.',
         { title: 'Nahráno' }
       );

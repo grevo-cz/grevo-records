@@ -16,9 +16,10 @@ interface Item {
   icon: React.ReactNode;
 }
 
-const topItems: Item[] = [
-  { id: 'home', label: 'Nahrávat', icon: <Video className="w-5 h-5" /> },
-  { id: 'library', label: 'Knihovna', icon: <LibraryIcon className="w-5 h-5" /> },
+const navItems: Item[] = [
+  { id: 'home', label: 'Nahrávat', icon: <Video className="w-[18px] h-[18px]" /> },
+  { id: 'library', label: 'Knihovna', icon: <LibraryIcon className="w-[18px] h-[18px]" /> },
+  { id: 'settings', label: 'Nastavení', icon: <SettingsIcon className="w-[18px] h-[18px]" /> },
 ];
 
 function initials(name: string): string {
@@ -32,61 +33,72 @@ function initials(name: string): string {
 }
 
 export function Sidebar({ view, session, onNavigate, onLogout }: SidebarProps) {
-  const renderBtn = (item: Item) => {
-    const active =
-      view === item.id || (view === 'preview' && item.id === 'library');
-    return (
-      <button
-        key={item.id}
-        onClick={() => onNavigate(item.id)}
-        title={item.label}
-        className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all
-          ${active
-            ? 'bg-accent-subtle text-accent'
-            : 'text-text-secondary hover:text-text-primary hover:bg-bg-card'
-          }`}
-      >
-        {item.icon}
-      </button>
-    );
-  };
-
   return (
-    <aside className="w-16 border-r border-bg-border bg-bg-elev flex flex-col items-center py-4">
-      <div
-        className="w-9 h-9 rounded-xl bg-accent text-white flex items-center justify-center mb-6 font-bold text-sm tracking-tight shadow-glow"
-        title="Records By Grevo"
-      >
-        Gr
+    <aside className="w-52 shrink-0 border-r border-bg-border bg-bg-elev flex flex-col">
+      {/* Wordmark */}
+      <div className="px-5 pt-6 pb-5">
+        <div className="display text-[19px] font-bold leading-none text-text-primary">
+          RECORDS
+        </div>
+        <div className="mt-1 text-[11px] text-text-muted tracking-wide">
+          by Grevo
+        </div>
       </div>
-      <nav className="flex flex-col gap-2">{topItems.map(renderBtn)}</nav>
-      <div className="flex-1" />
-      <nav className="flex flex-col gap-2 items-center">
-        {renderBtn({
-          id: 'settings',
-          label: 'Nastavení',
-          icon: <SettingsIcon className="w-5 h-5" />,
+
+      {/* Nav */}
+      <nav className="px-3 flex flex-col gap-0.5">
+        {navItems.map((item) => {
+          const active =
+            view === item.id || (view === 'preview' && item.id === 'library');
+          return (
+            <button
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left
+                ${
+                  active
+                    ? 'bg-accent-subtle text-accent font-medium'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-card'
+                }`}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          );
         })}
-        <div
-          className="w-9 h-9 rounded-full bg-bg-card border border-bg-border flex items-center justify-center text-xs font-semibold text-text-secondary mt-1"
-          title={`${session.displayName} · ${session.email}`}
-        >
-          {initials(session.displayName)}
+      </nav>
+
+      <div className="flex-1" />
+
+      {/* User + logout */}
+      <div className="px-3 pb-4 flex flex-col gap-1">
+        <div className="flex items-center gap-3 px-3 py-2">
+          <div
+            className="w-7 h-7 rounded-full bg-bg-card border border-bg-border flex items-center justify-center text-[10px] font-semibold text-text-secondary shrink-0"
+            title={session.email}
+          >
+            {initials(session.displayName)}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs text-text-primary truncate">
+              {session.displayName}
+            </div>
+          </div>
         </div>
         <button
           onClick={onLogout}
-          title={`Odhlásit ${session.email}`}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-text-secondary hover:text-danger hover:bg-bg-card transition-all"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary hover:text-danger hover:bg-bg-card transition-colors text-left"
         >
-          <LogOut className="w-5 h-5" />
+          <LogOut className="w-[18px] h-[18px]" />
+          Odhlásit
         </button>
         <div
-          className="text-[9px] text-text-muted font-mono mt-1"
-          title="Build version — ověř, že vidíš nejnovější deploy"
+          className="meter px-3 pt-1 text-[10px] text-text-muted"
+          title="Verze nasazené aplikace"
         >
           {BUILD_SHA}
         </div>
-      </nav>
+      </div>
     </aside>
   );
 }

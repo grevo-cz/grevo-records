@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Minus, Square } from 'lucide-react';
 
 interface Props {
   stream: MediaStream | null;
@@ -98,7 +99,7 @@ export function ScreenPreview({ stream, cameraStream }: Props) {
           className="hover:text-text-primary"
           title={collapsed ? 'Rozbalit' : 'Sbalit'}
         >
-          {collapsed ? '▢' : '—'}
+          {collapsed ? <Square className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
         </button>
       </div>
       {!collapsed && (

@@ -39,7 +39,7 @@ export function ConvertMp4Button({ recording, onConverted }: Props) {
     // The Bunny upload converts server-side instead — point the user there.
     if (recording.size >= SERVER_CONVERT_THRESHOLD_BYTES) {
       toast.info(
-        `Video má ${formatBytes(recording.size)} — konverze v prohlížeči by trvala dlouho. ` +
+        `Video má ${formatBytes(recording.size)}, konverze v prohlížeči by trvala dlouho. ` +
           'Použij „Nahrát na Bunny", server ho zkonvertuje na MP4 sám.',
         { title: 'Velké video', duration: 9000 }
       );

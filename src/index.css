@@ -1,3 +1,8 @@
+/* Records By Grevo — základní styly. Identita: studiová technika.
+   Display: Bricolage Grotesque (titulky, wordmark). Body: system.
+   Mono: timecode, velikosti, hashe — všechna „přístrojová" čísla. */
+@import '@fontsource-variable/bricolage-grotesque';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,47 +18,63 @@
     -moz-osx-font-smoothing: grayscale;
     user-select: none;
     overflow: hidden;
+    background: #111013;
   }
   input,
   textarea {
     user-select: text;
   }
+  /* Viditelný focus pro klávesnici — wolframový prstenec */
+  :focus-visible {
+    outline: 2px solid rgba(232, 163, 61, 0.7);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection {
+    background: rgba(232, 163, 61, 0.3);
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
       transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
   }
+  /* Primární akce: rozsvícené wolframové tlačítko — tmavý text na jantarové */
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-accent-hover shadow-glow;
+    @apply btn bg-accent text-[#1A1408] hover:bg-accent-hover font-semibold;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 8px rgba(232, 163, 61, 0.2);
   }
   .btn-secondary {
-    @apply btn bg-bg-card text-text-primary border border-bg-border hover:bg-bg-elev;
+    @apply btn bg-bg-card text-text-primary border border-bg-border hover:border-text-muted;
   }
   .btn-ghost {
     @apply btn text-text-secondary hover:text-text-primary hover:bg-bg-card;
   }
   .btn-danger {
-    @apply btn bg-danger/15 text-danger hover:bg-danger/25;
+    @apply btn bg-danger/15 text-danger border border-danger/20 hover:bg-danger/25;
   }
   .card {
-    @apply bg-bg-card border border-bg-border rounded-2xl;
+    @apply bg-bg-card border border-bg-border rounded-xl;
   }
   .input {
-    @apply bg-bg-elev border border-bg-border rounded-lg px-3 py-2 text-sm
+    @apply bg-bg border border-bg-border rounded-lg px-3 py-2 text-sm
       text-text-primary placeholder:text-text-muted
       focus:outline-none focus:border-accent transition-colors;
   }
-  .titlebar-drag {
-    -webkit-app-region: drag;
+  /* Přístrojová čísla: timecode, velikosti, hash */
+  .meter {
+    @apply font-mono tabular-nums tracking-tight;
   }
-  .no-drag {
-    -webkit-app-region: no-drag;
+  /* Nadpisy obrazovek */
+  .display {
+    font-family: 'Bricolage Grotesque Variable', system-ui, sans-serif;
+    font-variation-settings: 'wdth' 90;
+    letter-spacing: -0.02em;
   }
 }
 
-/* Custom scrollbar */
+/* Scrollbar — tichý, hardware-šedý */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -62,12 +83,23 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #26262c;
+  background: #2a272e;
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a44;
+  background: #3d3944;
   background-clip: padding-box;
+}
+
+/* Respektuj omezený pohyb */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

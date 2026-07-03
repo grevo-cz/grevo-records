@@ -63,12 +63,12 @@ export function RecoveryBanner({ onRecovered }: Props) {
       }
       if (recovered > 0) {
         toast.success(
-          `Obnovil jsem ${recovered === 1 ? 'nedokončenou nahrávku' : `${recovered} nedokončené nahrávky`} — najdeš ji v Knihovně jako „recovered-…". Pokud je to WebM, můžeš ji zkonvertovat na MP4 nebo nahrát na Bunny (server zkonvertuje sám).`,
+          `Obnovil jsem ${recovered === 1 ? 'nedokončenou nahrávku' : `${recovered} nedokončené nahrávky`}. Najdeš ji v Knihovně jako „recovered-…". Pokud je to WebM, můžeš ji zkonvertovat na MP4 nebo nahrát na Bunny (server zkonvertuje sám).`,
           { title: 'Nahrávka obnovena', duration: 10000 }
         );
         onRecovered?.();
       } else {
-        toast.error('Obnova se nepodařila — buffer je poškozený nebo prázdný.', {
+        toast.error('Obnova se nepodařila, buffer je poškozený nebo prázdný.', {
           title: 'Obnova nahrávky',
         });
       }
@@ -97,8 +97,8 @@ export function RecoveryBanner({ onRecovered }: Props) {
 
   return (
     <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-xl w-[calc(100%-2rem)] animate-fade-in">
-      <div className="flex flex-wrap items-center gap-3 bg-bg-card/95 backdrop-blur-xl border border-amber-400/40 rounded-2xl px-4 py-3 shadow-2xl">
-        <LifeBuoy className="w-5 h-5 text-amber-400 shrink-0" />
+      <div className="flex flex-wrap items-center gap-3 bg-bg-card/95 backdrop-blur-xl border border-accent/40 rounded-2xl px-4 py-3 shadow-2xl">
+        <LifeBuoy className="w-5 h-5 text-accent shrink-0" />
         <div className="flex-1 min-w-[200px]">
           <div className="text-sm font-medium">
             Našel jsem nedokončenou nahrávku ({formatBytes(totalBytes)})

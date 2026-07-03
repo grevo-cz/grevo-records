@@ -4,14 +4,14 @@ import { useToasts, dismiss, type Toast } from '../lib/toast';
 const ICONS: Record<Toast['kind'], React.ReactNode> = {
   success: <CheckCircle2 className="w-5 h-5 text-success" />,
   error: <AlertCircle className="w-5 h-5 text-danger" />,
-  warning: <AlertTriangle className="w-5 h-5 text-amber-400" />,
+  warning: <AlertTriangle className="w-5 h-5 text-accent" />,
   info: <Info className="w-5 h-5 text-accent" />,
 };
 
 const RING: Record<Toast['kind'], string> = {
   success: 'border-success/40',
   error: 'border-danger/40',
-  warning: 'border-amber-500/40',
+  warning: 'border-accent/40',
   info: 'border-accent/40',
 };
 

@@ -1,46 +1,68 @@
 /** @type {import('tailwindcss').Config} */
+//
+// Records By Grevo — design tokens
+//
+// Identita: studiová technika. Vrstvený teplý grafit (ne čistá černá),
+// wolframová jantarová jako akční barva (studiové lampy, VU metry),
+// REC červená vyhrazená pro nahrávání a destruktivní akce, monospace
+// timecode pro všechna čísla. Ostřejší rádiusy než výchozí blob-look.
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
         bg: {
-          DEFAULT: '#0a0a0b',
-          elev: '#131316',
-          card: '#1a1a1e',
-          border: '#26262c',
+          DEFAULT: '#111013', // warm near-black, lehce fialovohnědý nádech
+          elev: '#18171B',
+          card: '#1D1B20',
+          border: '#2A272E',
         },
         text: {
-          primary: '#f5f5f7',
-          secondary: '#a1a1aa',
-          muted: '#6b6b75',
+          primary: '#EDEAE4', // teplá papírová bílá
+          secondary: '#9B96A0',
+          muted: '#6C6772',
         },
+        // Akční barva: wolframová jantarová (studiové osvětlení)
         accent: {
-          DEFAULT: '#7c6cff',
-          hover: '#9180ff',
-          subtle: '#7c6cff20',
+          DEFAULT: '#E8A33D',
+          hover: '#F2B45C',
+          subtle: 'rgba(232, 163, 61, 0.13)',
         },
-        danger: '#ef4444',
-        success: '#22c55e',
+        // REC červená — nahrávání + destruktivní akce (tally light)
+        danger: '#F5453C',
+        success: '#4FBF67',
       },
       fontFamily: {
+        display: [
+          '"Bricolage Grotesque Variable"',
+          '-apple-system',
+          'system-ui',
+          'sans-serif',
+        ],
         sans: [
           '-apple-system',
           'BlinkMacSystemFont',
-          'SF Pro Display',
           'Inter',
           'system-ui',
           'sans-serif',
         ],
-        mono: ['SF Mono', 'Menlo', 'monospace'],
+        mono: [
+          'ui-monospace',
+          'SF Mono',
+          'JetBrains Mono',
+          'Menlo',
+          'monospace',
+        ],
       },
       borderRadius: {
-        xl: '14px',
-        '2xl': '18px',
+        lg: '8px',
+        xl: '10px',
+        '2xl': '14px',
       },
       boxShadow: {
-        soft: '0 4px 20px rgba(0,0,0,0.4)',
-        glow: '0 0 24px rgba(124,108,255,0.25)',
+        soft: '0 4px 20px rgba(0, 0, 0, 0.45)',
+        glow: '0 0 0 1px rgba(232, 163, 61, 0.25), 0 4px 24px rgba(232, 163, 61, 0.12)',
+        rec: '0 0 0 1px rgba(245, 69, 60, 0.35), 0 0 32px rgba(245, 69, 60, 0.25)',
       },
       animation: {
         'pulse-soft': 'pulse 2s ease-in-out infinite',

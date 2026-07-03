@@ -209,7 +209,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       const reason =
         e instanceof Error && e.message ? e.message : 'neznámá chyba';
       toast.error(
-        `Uložení nahrávky selhalo: ${reason}. NEZAVÍREJ tab — zkus uvolnit místo ` +
+        `Uložení nahrávky selhalo: ${reason}. NEZAVÍREJ tab, zkus uvolnit místo ` +
           '(smazat staré nahrávky v Knihovně) a stáhnout video přes DevTools.',
         { title: 'Kritická chyba', duration: 0 }
       );
@@ -278,7 +278,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
               className={`w-2.5 h-2.5 rounded-full ${
                 recorder.state === 'recording'
                   ? 'bg-danger animate-pulse-soft'
-                  : 'bg-amber-400'
+                  : 'bg-accent'
               }`}
             />
             <span className="text-text-secondary uppercase text-[10px] tracking-widest font-medium">
@@ -382,7 +382,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                   recorder.state === 'recording'
                     ? 'bg-danger animate-pulse-soft'
                     : recorder.state === 'paused'
-                    ? 'bg-amber-400'
+                    ? 'bg-accent'
                     : recorder.state === 'countdown'
                     ? 'bg-accent animate-pulse-soft'
                     : 'bg-text-muted'

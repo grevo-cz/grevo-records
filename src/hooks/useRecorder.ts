@@ -243,11 +243,11 @@ export function useRecorder(): UseRecorderReturn {
               micStreamRef.current = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true },
               });
-              toast.warning('Vybraný mikrofon není dostupný — používám výchozí.', {
+              toast.warning('Vybraný mikrofon není dostupný, používám výchozí.', {
                 title: 'Mikrofon',
               });
             } catch {
-              toast.warning('Mikrofon se nepodařilo otevřít — nahrávám bez něj.', {
+              toast.warning('Mikrofon se nepodařilo otevřít, nahrávám bez něj.', {
                 title: 'Mikrofon',
               });
             }
@@ -273,11 +273,11 @@ export function useRecorder(): UseRecorderReturn {
               });
               cameraStreamRef.current = camStream;
               setCameraStream(camStream);
-              toast.warning('Vybraná kamera není dostupná — používám výchozí.', {
+              toast.warning('Vybraná kamera není dostupná, používám výchozí.', {
                 title: 'Kamera',
               });
             } catch {
-              toast.warning('Kameru se nepodařilo otevřít — nahrávám bez ní.', {
+              toast.warning('Kameru se nepodařilo otevřít, nahrávám bez ní.', {
                 title: 'Kamera',
               });
             }
@@ -483,7 +483,7 @@ export function useRecorder(): UseRecorderReturn {
                 try {
                   console.warn('[recorder] retrying with WebM after MP4 failure');
                   toast.warning(
-                    'Nahrávání v MP4 selhalo — pokračuji ve WebM. Po uložení můžeš použít „Konvertovat na MP4".',
+                    'Nahrávání v MP4 selhalo, pokračuji ve WebM. Po uložení můžeš použít „Konvertovat na MP4".',
                     { title: 'Nahrávání', duration: 6000 }
                   );
                   armAndStart(webmOnly.length ? webmOnly : ['video/webm']);

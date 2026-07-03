@@ -261,7 +261,7 @@ export function TrimEditor({
     setDeletes((prev) => [...prev, ...newDeletes]);
     const total = newDeletes.reduce((acc, d) => acc + (d.end - d.start), 0);
     toast.success(
-      `Navrženo ${newDeletes.length} výřezů — uspoříš ${total.toFixed(1)}s.`
+      `Navrženo ${newDeletes.length} výřezů, uspoříš ${total.toFixed(1)}s.`
     );
   };
 
@@ -454,7 +454,7 @@ export function TrimEditor({
     const ok = await confirmDialog({
       title: 'Přepsat původní nahrávku?',
       message:
-        'Původní verze bude nahrazena střihem a nepůjde vrátit. Pokud byla na Bunny, starý link přestane odpovídat obsahu — nahraj ji znovu.',
+        'Původní verze bude nahrazena střihem a nepůjde vrátit. Pokud byla na Bunny, starý link přestane odpovídat obsahu. Nahraj ji znovu.',
       confirmLabel: 'Přepsat',
       danger: true,
     });
@@ -605,7 +605,7 @@ export function TrimEditor({
             preserveAspectRatio="none"
             viewBox={`0 0 ${peaks.length} 100`}
           >
-            <g fill="rgba(124,108,255,0.75)">
+            <g fill="rgba(232,163,61,0.7)">
               {peaks.map((p, i) => {
                 const h = Math.max(2, p * 100);
                 return (
@@ -763,7 +763,7 @@ export function TrimEditor({
             className="btn-secondary"
             title={
               !hasChanges
-                ? 'Není co stříhat — pohni úchyty nebo přidej výřez'
+                ? 'Není co stříhat. Pohni úchyty nebo přidej výřez'
                 : 'Přepsat původní nahrávku střihem (nevratné)'
             }
           >
@@ -775,7 +775,7 @@ export function TrimEditor({
             className="btn-primary"
             title={
               !hasChanges
-                ? 'Není co stříhat — pohni úchyty nebo přidej výřez'
+                ? 'Není co stříhat. Pohni úchyty nebo přidej výřez'
                 : 'Uložit jako novou nahrávku, originál zůstane'
             }
           >

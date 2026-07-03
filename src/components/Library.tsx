@@ -10,6 +10,7 @@ import {
   X,
   AlertTriangle,
   HardDrive,
+  Play,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
@@ -174,7 +175,7 @@ export function Library({ onOpen }: Props) {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Knihovna</h1>
           <p className="text-text-secondary mt-2 text-sm">
-            Nahrávky uložené v prohlížeči — vidíš jen své.
+            Nahrávky uložené v prohlížeči, vidíš jen své.
           </p>
         </div>
         {usage && usage.quota > 0 && (() => {
@@ -184,12 +185,12 @@ export function Library({ onOpen }: Props) {
             <div
               className={`flex items-center gap-3 px-4 py-2 rounded-xl border min-w-[260px] ${
                 warn
-                  ? 'bg-amber-500/10 border-amber-500/30'
+                  ? 'bg-accent-subtle border-accent/30'
                   : 'bg-bg-card border-bg-border'
               }`}
             >
               {warn ? (
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <AlertTriangle className="w-4 h-4 text-accent shrink-0" />
               ) : (
                 <HardDrive className="w-4 h-4 text-text-secondary shrink-0" />
               )}
@@ -201,7 +202,7 @@ export function Library({ onOpen }: Props) {
                 <div className="w-full h-1.5 bg-bg-elev rounded-full overflow-hidden">
                   <div
                     className={`h-full transition-all ${
-                      warn ? 'bg-amber-400' : 'bg-accent'
+                      warn ? 'bg-accent' : 'bg-accent'
                     }`}
                     style={{ width: `${Math.min(100, pct)}%` }}
                   />
@@ -421,7 +422,7 @@ function RecordingCard({
 
         {rec.uploadedUrl && (
           <span
-            className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-accent/90 text-white text-[10px] font-medium inline-flex items-center gap-1"
+            className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-accent text-[#1A1408] text-[10px] font-semibold inline-flex items-center gap-1"
             title="Nahráno na Bunny CDN"
           >
             <Cloud className="w-3 h-3" /> Bunny
@@ -433,8 +434,8 @@ function RecordingCard({
           </span>
         )}
         {hovering && (
-          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-accent/90 text-white text-[10px] font-medium animate-fade-in">
-            ▶ náhled
+          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-accent text-[#1A1408] text-[10px] font-semibold inline-flex items-center gap-1 animate-fade-in">
+            <Play className="w-2.5 h-2.5 fill-current" /> náhled
           </span>
         )}
       </div>
