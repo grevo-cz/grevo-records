@@ -140,6 +140,9 @@ function runFfmpeg(inPath, outPath) {
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '23',
+      // 2 s keyframe interval so the in-app smart-cut trim can stream-copy
+      // GOPs instead of re-encoding (x264 default ~8 s is too sparse).
+      '-g', '60',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '128k',

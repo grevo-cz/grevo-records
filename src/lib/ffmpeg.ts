@@ -156,13 +156,16 @@ export async function convertToMp4(
       // x264 auto-threading exceeds the wasm pthread pool and aborts the core.
       '-threads', loadedMt ? '4' : '1',
       '-c:v', 'libx264',
-      // ultrafast, not veryfast: in wasm the x264 encode dominates and
-      // veryfast ran ~5x slower (19 s / 1440p clip: 20 s vs 3.8 s). For
-      // screen content the quality at crf 23 is indistinguishable; the
-      // only cost is a slightly larger file, which is fine for a local
-      // or uploaded deliverable.
-      '-preset', 'ultrafast',
+      // superfast: the wasm speed/size balance. Measured on a 19 s 1440p
+      // clip: veryfast 24 s/3.2 MB, superfast 9 s/6.4 MB, ultrafast
+      // 4 s/8.8 MB. ultrafast inflated real recordings ~5x (100 MB →
+      // 500 MB), so superfast it is: still ~2.5x faster than veryfast.
+      '-preset', 'superfast',
       '-crf', '23',
+      // 2 s keyframe interval: the smart-cut trim copies whole GOPs and
+      // re-encodes only up to the next keyframe, so short GOPs make
+      // edits near-instant. x264 default (250 frames ≈ 8 s) is too sparse.
+      '-g', '60',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '128k',
@@ -198,12 +201,197 @@ export interface TrimSegment {
 }
 
 /**
+ * Runs ffprobe and returns its captured stdout.
+ *
+ * The return code is IGNORED: core-mt 0.12.10 only wires the exit-code
+ * callback into the ffmpeg entry, so ffprobe always reports -1 even on
+ * success. Success is judged by whether it produced output; callers parse
+ * that output and fail on garbage anyway.
+ */
+async function ffprobeOut(ffmpeg: FFmpeg, args: string[]): Promise<string> {
+  let out = '';
+  const onLog = (e: { type: string; message: string }) => {
+    if (e.type === 'stdout') out += e.message + '\n';
+  };
+  ffmpeg.on('log', onLog);
+  try {
+    await ffmpeg.ffprobe(args);
+  } finally {
+    ffmpeg.off('log', onLog);
+  }
+  if (!out.trim()) throw new Error('ffprobe produced no output');
+  return out;
+}
+
+/** Piece of the output timeline: either stream-copied or re-encoded. */
+interface CutPiece {
+  start: number;
+  dur: number;
+  encode: boolean;
+}
+
+// Cut boundaries within this distance of a keyframe count as "on" it.
+const KF_EPS = 0.08;
+
+/**
+ * Smart cut for H.264 MP4 sources at 1x speed: stream-copy everything and
+ * re-encode ONLY the slice between each cut point and the next keyframe.
+ * A 12-minute video with two cuts copies ~12 minutes of packets (seconds
+ * of I/O) and encodes a few seconds of video — instead of re-encoding the
+ * whole file (minutes of CPU and a 3-5x bitrate inflation).
+ *
+ * Pieces are written as MPEG-TS (in-band SPS/PPS, so copied and freshly
+ * encoded pieces can differ in encoder params) and joined with the concat
+ * demuxer into a faststart MP4.
+ */
+async function smartCutMp4(
+  ffmpeg: FFmpeg,
+  inputName: string,
+  segments: TrimSegment[],
+  onProgress?: ConvertProgress
+): Promise<Blob> {
+  onProgress?.(2, 'converting');
+
+  // --- Probe: stream layout must be plain H.264 (+ optional AAC) ---------
+  const infoRaw = await ffprobeOut(ffmpeg, [
+    '-v', 'error',
+    '-show_entries', 'format=duration:stream=codec_type,codec_name',
+    '-of', 'json', inputName,
+  ]);
+  const info = JSON.parse(infoRaw) as {
+    format?: { duration?: string };
+    streams?: { codec_type: string; codec_name: string }[];
+  };
+  const vStream = info.streams?.find((s) => s.codec_type === 'video');
+  const hasAudio = !!info.streams?.some((s) => s.codec_type === 'audio');
+  if (!vStream || vStream.codec_name !== 'h264') {
+    throw new Error(`smart cut: unsupported video codec ${vStream?.codec_name}`);
+  }
+
+  // --- Probe: keyframe timestamps (decodes only keyframes, cheap) --------
+  const kfRaw = await ffprobeOut(ffmpeg, [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-skip_frame', 'nokey',
+    '-show_entries', 'frame=pts_time',
+    '-of', 'csv=p=0', inputName,
+  ]);
+  const keyframes = kfRaw
+    .split('\n')
+    .map((l) => parseFloat(l))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  if (keyframes.length === 0) throw new Error('smart cut: no keyframes found');
+  onProgress?.(8, 'converting');
+
+  // --- Plan pieces -------------------------------------------------------
+  const pieces: CutPiece[] = [];
+  for (const s of segments) {
+    const a = Math.max(0, s.start);
+    const b = s.end;
+    if (b - a < KF_EPS) continue;
+    const k = keyframes.find((kf) => kf >= a - KF_EPS);
+    if (k === undefined || (k > a + KF_EPS && k >= b - KF_EPS)) {
+      // No usable keyframe inside the segment: re-encode it whole.
+      pieces.push({ start: a, dur: b - a, encode: true });
+    } else if (k <= a + KF_EPS) {
+      // Segment starts on a keyframe: pure copy.
+      pieces.push({ start: k, dur: b - k, encode: false });
+    } else {
+      // Re-encode the head up to the keyframe, copy the rest.
+      pieces.push({ start: a, dur: k - a, encode: true });
+      pieces.push({ start: k, dur: b - k, encode: false });
+    }
+  }
+  if (pieces.length === 0) throw new Error('Nezbyly žádné úseky k uložení.');
+
+  // --- Extract pieces ----------------------------------------------------
+  const names: string[] = [];
+  const cleanup: string[] = [];
+  try {
+    for (let i = 0; i < pieces.length; i++) {
+      const p = pieces[i];
+      const name = `piece_${i}.ts`;
+      const ret = await ffmpeg.exec([
+        '-ss', p.start.toFixed(3),
+        '-i', inputName,
+        '-t', p.dur.toFixed(3),
+        '-map', '0:v:0',
+        ...(hasAudio ? ['-map', '0:a:0'] : []),
+        ...(p.encode
+          ? [
+              // Boundary slices are a few seconds: spend quality on them.
+              '-c:v', 'libx264',
+              '-preset', 'veryfast',
+              '-crf', '21',
+              '-pix_fmt', 'yuv420p',
+              '-profile:v', 'high',
+              '-threads', loadedMt ? '4' : '1',
+              ...(hasAudio ? ['-c:a', 'aac', '-b:a', '128k'] : []),
+            ]
+          : ['-c', 'copy']),
+        '-avoid_negative_ts', 'make_zero',
+        '-muxdelay', '0',
+        '-muxpreload', '0',
+        '-f', 'mpegts', name,
+      ]);
+      if (ret !== 0) throw new Error(`smart cut: piece ${i} failed (${ret})`);
+      names.push(name);
+      cleanup.push(name);
+      onProgress?.(8 + (82 * (i + 1)) / pieces.length, 'converting');
+    }
+
+    // --- Concat ----------------------------------------------------------
+    await ffmpeg.writeFile(
+      'concat.txt',
+      new TextEncoder().encode(names.map((n) => `file '${n}'`).join('\n'))
+    );
+    cleanup.push('concat.txt');
+    const ret = await ffmpeg.exec([
+      '-f', 'concat', '-safe', '0', '-i', 'concat.txt',
+      '-c', 'copy',
+      ...(hasAudio ? ['-bsf:a', 'aac_adtstoasc'] : []),
+      '-movflags', '+faststart',
+      'cut-out.mp4',
+    ]);
+    if (ret !== 0) throw new Error(`smart cut: concat failed (${ret})`);
+    cleanup.push('cut-out.mp4');
+
+    // --- Sanity: output length must match the kept segments --------------
+    const expected = pieces.reduce((acc, p) => acc + p.dur, 0);
+    const outInfoRaw = await ffprobeOut(ffmpeg, [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'csv=p=0', 'cut-out.mp4',
+    ]);
+    const outDur = parseFloat(outInfoRaw);
+    if (!Number.isFinite(outDur) || Math.abs(outDur - expected) > 1.5) {
+      throw new Error(
+        `smart cut: bad output duration ${outDur} (expected ~${expected.toFixed(1)})`
+      );
+    }
+
+    const data = (await ffmpeg.readFile('cut-out.mp4')) as Uint8Array;
+    const bytes = new Uint8Array(data.byteLength);
+    bytes.set(data);
+    onProgress?.(100, 'converting');
+    return new Blob([bytes], { type: 'video/mp4' });
+  } finally {
+    for (const f of cleanup) {
+      try {
+        await ffmpeg.deleteFile(f);
+      } catch {}
+    }
+  }
+}
+
+/**
  * Cuts a recording to the given kept segments (joined seamlessly) and
  * optionally changes playback speed — output is always MP4.
  *
- * Replaces the old canvas-replay exporter: MediaRecorder WebM has no seek
- * cues, so seeking a hidden <video> hung forever. ffmpeg's select filter
- * works on cue-less input and runs near-realtime with the MT core.
+ * MP4 sources at 1x speed take the smart-cut path (stream copy, seconds,
+ * no generation loss); anything else falls back to a full re-encode via
+ * the select-filter graph, which also works on cue-less MediaRecorder WebM.
  */
 export async function trimToMp4(
   source: Blob,
@@ -220,15 +408,34 @@ export async function trimToMp4(
     segments.reduce((acc, s) => acc + Math.max(0, s.end - s.start), 0) / rate;
 
   const ffmpeg = await getFFmpeg(onProgress);
+
+  const inputName = 'trim-in';
+  const outputName = 'trim-out.mp4';
+
+  // Fast path: no speed change + MP4 container → smart cut. Falls back to
+  // the re-encode below on any failure (odd codec, probe error, ...).
+  if (rate === 1 && /mp4/i.test(source.type)) {
+    try {
+      await ffmpeg.writeFile(inputName, await fetchFile(source));
+      try {
+        return await smartCutMp4(ffmpeg, inputName, segments, onProgress);
+      } finally {
+        try {
+          await ffmpeg.deleteFile(inputName);
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[trim] smart cut failed, falling back to re-encode:', err);
+      onProgress?.(0, 'converting');
+    }
+  }
+
   const handleProgress = ({ progress, time }: { progress: number; time: number }) => {
     const pct =
       outDurSec > 0 ? (time / 1_000_000 / outDurSec) * 100 : progress * 100;
     onProgress?.(Math.min(99, Math.max(0, pct)), 'converting');
   };
   ffmpeg.on('progress', handleProgress);
-
-  const inputName = 'trim-in';
-  const outputName = 'trim-out.mp4';
 
   // Per-segment trim + concat preserves the real frame timestamps inside
   // each kept segment. The old select+setpts=N/FRAME_RATE/TB re-stamped
@@ -258,10 +465,12 @@ export async function trimToMp4(
   const commonOut = [
     '-threads', loadedMt ? '4' : '1',
     '-c:v', 'libx264',
-    // ultrafast: x264 encode dominates in wasm; ~5x faster than veryfast
-    // with no visible quality loss on screen content (see convertToMp4).
-    '-preset', 'ultrafast',
+    // superfast: speed/size balance — ultrafast inflated bitrate ~3-5x
+    // (see convertToMp4). This path only runs for WebM sources or speed
+    // changes; MP4 at 1x goes through smartCutMp4 above.
+    '-preset', 'superfast',
     '-crf', '23',
+    '-g', '60',
     '-pix_fmt', 'yuv420p',
   ];
 
