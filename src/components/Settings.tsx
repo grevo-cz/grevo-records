@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Save,
   Check,
-  Cloud,
+  Play,
   Eye,
   EyeOff,
   Server,
@@ -17,18 +17,6 @@ import {
 } from '../lib/settings';
 import { PROXY_URL } from '../lib/proxy-config';
 import { toast } from '../lib/toast';
-
-const REGIONS: { value: string; label: string }[] = [
-  { value: 'storage.bunnycdn.com', label: 'Falkenstein, DE (výchozí)' },
-  { value: 'ny.storage.bunnycdn.com', label: 'New York, US' },
-  { value: 'la.storage.bunnycdn.com', label: 'Los Angeles, US' },
-  { value: 'sg.storage.bunnycdn.com', label: 'Singapore' },
-  { value: 'syd.storage.bunnycdn.com', label: 'Sydney, AU' },
-  { value: 'uk.storage.bunnycdn.com', label: 'London, UK' },
-  { value: 'se.storage.bunnycdn.com', label: 'Stockholm, SE' },
-  { value: 'br.storage.bunnycdn.com', label: 'São Paulo, BR' },
-  { value: 'jh.storage.bunnycdn.com', label: 'Johannesburg, ZA' },
-];
 
 export function Settings() {
   const [bunny, setBunny] = useState<BunnySettings>(loadBunnySettings());
@@ -53,9 +41,8 @@ export function Settings() {
     // Validate when enabled — surface missing fields up front
     if (bunny.enabled) {
       const missing: string[] = [];
-      if (!bunny.storageZone.trim()) missing.push('Storage Zone Name');
-      if (!bunny.accessKey.trim()) missing.push('Access Key');
-      if (!bunny.pullZoneUrl.trim()) missing.push('Pull Zone URL');
+      if (!/^\d+$/.test(bunny.libraryId.trim())) missing.push('Library ID (číslo)');
+      if (!bunny.apiKey.trim()) missing.push('API klíč');
       if (missing.length > 0) {
         toast.warning(`Bunny upload je zapnutý, ale chybí: ${missing.join(', ')}`, {
           title: 'Doplň pole',
@@ -89,10 +76,11 @@ export function Settings() {
   return (
     <div className="min-h-full p-6 sm:p-10 max-w-3xl mx-auto animate-fade-in">
       <header className="pt-4 mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight">Nastavení</h1>
+        <h1 className="display text-[28px] font-bold tracking-tight">Nastavení</h1>
         <p className="text-text-secondary mt-2">
-          Konfigurace sdílení nahrávek přes <strong>tvoji vlastní</strong> Bunny
-          Storage Zone. Sdílená proxy je zařízena na pozadí.
+          Nahrávky se posílají do <strong>tvojí vlastní</strong> Bunny Stream
+          knihovny. Přehrávají se adaptivně jako na YouTube, klient nic
+          nestahuje.
         </p>
       </header>
 
@@ -100,13 +88,13 @@ export function Settings() {
         <div className="flex items-start justify-between gap-4 mb-5">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-xl bg-accent-subtle text-accent flex items-center justify-center shrink-0">
-              <Cloud className="w-5 h-5" />
+              <Play className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-semibold">Bunny upload</h2>
+              <h2 className="font-semibold">Bunny Stream upload</h2>
               <p className="text-sm text-text-secondary mt-1">
-                Tvoje Access Key se ukládá jen u tebe v prohlížeči. Posílá se
-                přes HTTPS do sdílené proxy, která ho předá Bunny. Proxy nic
+                API klíč se ukládá jen u tebe v prohlížeči. Posílá se přes
+                HTTPS do sdílené proxy, která ho předá Bunny. Proxy nic
                 neukládá.
               </p>
             </div>
@@ -120,46 +108,30 @@ export function Settings() {
           }`}
         >
           <Field
-            label="Storage Zone Name"
-            hint={'Najdeš v Bunny dashboardu → Storage. Např. „jan-vodvarka-apps".'}
+            label="Video Library ID"
+            hint="Bunny dashboard → Stream → tvoje knihovna → API. Je to číslo, např. 493169."
           >
             <input
               type="text"
+              inputMode="numeric"
               className="input w-full font-mono"
-              placeholder="my-recordings"
-              value={bunny.storageZone}
-              onChange={(e) => update('storageZone', e.target.value.trim())}
+              placeholder="493169"
+              value={bunny.libraryId}
+              onChange={(e) => update('libraryId', e.target.value.replace(/\D/g, ''))}
             />
           </Field>
 
           <Field
-            label="Storage Region"
-            hint="Region tvojí Storage Zone (Bunny dashboard → Storage → Access)."
-          >
-            <select
-              className="input w-full"
-              value={bunny.storageHost}
-              onChange={(e) => update('storageHost', e.target.value)}
-            >
-              {REGIONS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field
-            label="Storage Access Key (Password)"
-            hint="Bunny → Storage Zone → FTP & API Access → Password. Ukládá se jen v tvém prohlížeči."
+            label="API klíč knihovny"
+            hint="Stream → tvoje knihovna → API → API Key (ten s právem zápisu, ne read-only). Ukládá se jen v tvém prohlížeči."
           >
             <div className="relative">
               <input
                 type={revealKey ? 'text' : 'password'}
                 className="input w-full pr-10 font-mono"
-                placeholder="••••••••-••••-••••-••••-••••••••••••"
-                value={bunny.accessKey}
-                onChange={(e) => update('accessKey', e.target.value.trim())}
+                placeholder="••••••••-••••-••••-••••••••••••"
+                value={bunny.apiKey}
+                onChange={(e) => update('apiKey', e.target.value.trim())}
               />
               <button
                 type="button"
@@ -172,37 +144,15 @@ export function Settings() {
           </Field>
 
           <Field
-            label="Pull Zone URL"
-            hint="CDN URL napojený na tvoji Storage Zone. Bude použito v sdílecích linkách."
+            label="Collection ID (volitelné)"
+            hint="GUID kolekce, do které se mají videa řadit (Stream → Collections → otevři kolekci, GUID je v URL). Prázdné = kořen knihovny."
           >
             <input
               type="text"
               className="input w-full font-mono"
-              placeholder="https://my-zone.b-cdn.net"
-              value={bunny.pullZoneUrl}
-              onChange={(e) => {
-                let v = e.target.value.trim().replace(/\/+$/, '');
-                // Auto-prefix https:// if user typed bare hostname
-                if (v && !/^https?:\/\//i.test(v)) {
-                  v = 'https://' + v;
-                }
-                update('pullZoneUrl', v);
-              }}
-            />
-          </Field>
-
-          <Field
-            label="Cílová složka"
-            hint="Cesta uvnitř Storage Zone. Soubory budou ukládány s názvem nahrávky."
-          >
-            <input
-              type="text"
-              className="input w-full font-mono"
-              placeholder="recordings/"
-              value={bunny.folder}
-              onChange={(e) =>
-                update('folder', e.target.value.replace(/^\/+/, '').replace(/\/?$/, '/'))
-              }
+              placeholder="např. 8f1c2d3e-…"
+              value={bunny.collectionId}
+              onChange={(e) => update('collectionId', e.target.value.trim())}
             />
           </Field>
 
@@ -210,7 +160,7 @@ export function Settings() {
             <div>
               <div className="font-medium text-sm">Auto-upload po nahrávání</div>
               <div className="text-xs text-text-secondary mt-0.5">
-                Hned po stopnutí a konverzi do MP4 se video automaticky pošle.
+                Hned po stopnutí se video automaticky pošle na Bunny Stream.
               </div>
             </div>
             <Toggle on={bunny.autoUpload} onChange={(v) => update('autoUpload', v)} />
@@ -237,13 +187,18 @@ export function Settings() {
               </button>
             </div>
             {pingState.kind === 'ok' && (
-              <div className="mt-3 text-xs text-success flex items-start gap-2">
-                <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
-                <div>
-                  Proxy běží · mód:{' '}
-                  <code className="text-text-primary">
-                    {pingState.data?.mode || 'unknown'}
-                  </code>
+              <div className="mt-3 text-xs flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-success" />
+                <div className="text-success">
+                  Proxy běží
+                  {pingState.data?.stream ? (
+                    <> · Stream podporován</>
+                  ) : (
+                    <span className="text-danger">
+                      {' '}
+                      · POZOR: proxy ještě neumí Stream, aktualizuj kontejner proxy
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -253,7 +208,7 @@ export function Settings() {
                 <div>Spojení selhalo: {pingState.message}</div>
               </div>
             )}
-            <div className="mt-2 text-[10px] text-text-muted font-mono">
+            <div className="mt-2 text-[10px] text-text-muted meter">
               Proxy: {PROXY_URL}
             </div>
           </div>

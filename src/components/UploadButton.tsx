@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Cloud, UploadCloud, Loader2, Copy, ExternalLink, Check } from 'lucide-react';
 import type { StoredRecording } from '../types';
-import { uploadToBunny, isWebmMime } from '../lib/upload';
+import { uploadToBunny } from '../lib/upload';
 import { setUploadedUrl } from '../lib/storage';
 import { isBunnyConfigured } from '../lib/settings';
 import { formatBytes } from '../lib/format';
@@ -15,14 +15,7 @@ interface Props {
 
 type State =
   | { kind: 'idle' }
-  | {
-      kind: 'uploading';
-      loaded: number;
-      total: number;
-      pct: number;
-      /** Upload finished (100 %) but the proxy is still converting to MP4. */
-      serverConverting?: boolean;
-    }
+  | { kind: 'uploading'; loaded: number; total: number; pct: number }
   | { kind: 'success'; url: string }
   | { kind: 'error'; message: string };
 
@@ -61,22 +54,13 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       return;
     }
     setState({ kind: 'uploading', loaded: 0, total: recording.size, pct: 0 });
-    // WebM → server-side MP4 conversion during upload (native ffmpeg on proxy).
-    const wantConvert = isWebmMime(recording.mimeType);
     try {
       const result = await uploadToBunny(
         recording.blob,
         recording.name,
         (loaded, total, pct) =>
-          setState({
-            kind: 'uploading',
-            loaded,
-            total,
-            pct,
-            serverConverting: wantConvert && pct >= 100,
-          }),
+          setState({ kind: 'uploading', loaded, total, pct }),
         {
-          convert: wantConvert,
           onRetry: (attempt, reason) =>
             toast.warning(
               `Pokus ${attempt} selhal (${reason}). Zkouším znovu…`,
@@ -84,18 +68,10 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
             ),
         }
       );
-      if (wantConvert && !result.converted) {
-        toast.warning(
-          'Upload proxy nepodporuje serverovou konverzi, na Bunny je WebM. Aktualizuj proxy pro MP4.',
-          { title: 'MP4 konverze', duration: 8000 }
-        );
-      }
       const updated = await setUploadedUrl(recording.id, result.url);
       setState({ kind: 'success', url: result.url });
       toast.success(
-        wantConvert && result.converted
-          ? 'Video je na Bunny CDN, zkonvertováno do MP4.'
-          : 'Video je na Bunny CDN.',
+        'Video je na Bunny Stream. Přehrávač naběhne hned po zpracování (u dlouhých videí pár minut).',
         { title: 'Nahráno' }
       );
       if (updated && onUploaded) onUploaded(updated);
@@ -135,11 +111,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
     if (state.kind === 'uploading') {
       return (
         <span
-          title={
-            state.serverConverting
-              ? 'Server konvertuje video na MP4…'
-              : `Nahrávám ${Math.round(state.pct)}%`
-          }
+          title={`Nahrávám ${Math.round(state.pct)}%`}
           className="btn-ghost p-1.5 cursor-default text-accent"
         >
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -195,18 +167,14 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
         <div className="flex items-center gap-2 text-sm">
           <Loader2 className="w-4 h-4 animate-spin text-accent" />
           <span>
-            {state.serverConverting
-              ? 'Server konvertuje video… (velká videa = několik minut)'
-              : `Nahrávám… ${Math.round(state.pct)}% (${formatBytes(
-                  state.loaded
-                )} / ${formatBytes(state.total)})`}
+            {`Nahrávám… ${Math.round(state.pct)}% (${formatBytes(
+              state.loaded
+            )} / ${formatBytes(state.total)})`}
           </span>
         </div>
         <div className="w-full h-1.5 bg-bg-elev rounded-full overflow-hidden">
           <div
-            className={`h-full bg-accent transition-all ${
-              state.serverConverting ? 'animate-pulse' : ''
-            }`}
+            className="h-full bg-accent transition-all"
             style={{ width: `${state.pct}%` }}
           />
         </div>

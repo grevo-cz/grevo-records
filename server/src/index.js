@@ -40,7 +40,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, x-upload-secret, x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone'
+    'Content-Type, x-upload-secret, x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone, x-stream-library, x-stream-key'
   );
   res.setHeader('Access-Control-Max-Age', '86400');
   if (req.method === 'OPTIONS') return res.status(204).end();
@@ -54,7 +54,8 @@ app.get('/', (_req, res) => {
     status: 'ok',
     mode: 'multi-tenant',
     convert: 'mp4',
-    info: 'Send Bunny credentials via headers x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone',
+    stream: true,
+    info: 'Storage: headers x-bunny-zone, x-bunny-host, x-bunny-key, x-pull-zone. Stream: x-stream-library, x-stream-key.',
   });
 });
 
@@ -364,6 +365,158 @@ app.post('/upload', (req, res) => {
   });
 
   req.pipe(proxyReq);
+});
+
+// ────── Bunny Stream upload (create video, then streamed PUT) ──────
+// Stream transcodes to adaptive-bitrate HLS itself — no ffmpeg needed here,
+// WebM and MP4 alike are accepted as-is.
+function readStreamCreds(req, res) {
+  const library = String(req.headers['x-stream-library'] || '').trim();
+  const key = String(req.headers['x-stream-key'] || '').trim();
+  if (!/^\d+$/.test(library) || !key) {
+    res.status(400).json({
+      ok: false,
+      error:
+        'Missing Stream credentials. Required headers: x-stream-library (Library ID, číslo), x-stream-key (API key knihovny)',
+    });
+    return null;
+  }
+  return { library, key };
+}
+
+function streamApi(method, apiPath, key, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? Buffer.from(JSON.stringify(body)) : null;
+    const r = https.request(
+      `https://video.bunnycdn.com${apiPath}`,
+      {
+        method,
+        headers: {
+          AccessKey: key,
+          Accept: 'application/json',
+          ...(payload
+            ? { 'Content-Type': 'application/json', 'Content-Length': payload.length }
+            : {}),
+        },
+      },
+      (rs) => {
+        const chunks = [];
+        rs.on('data', (c) => chunks.push(c));
+        rs.on('end', () =>
+          resolve({
+            status: rs.statusCode || 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          })
+        );
+      }
+    );
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+app.post('/upload-stream', async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const creds = readStreamCreds(req, res);
+  if (!creds) return;
+  req.setTimeout(CONVERT_REQ_TIMEOUT_MS);
+  if (typeof res.setTimeout === 'function') res.setTimeout(CONVERT_REQ_TIMEOUT_MS);
+
+  // Title keeps diacritics — it is a human-readable label in the Stream
+  // library, not a URL path.
+  const title =
+    String(req.query.name || 'recording').replace(/\.[^.]*$/, '').slice(0, 200) ||
+    'recording';
+  const collection = String(req.query.collection || '').trim();
+
+  // 1) Create the video object (gets us the guid to upload into)
+  let guid;
+  try {
+    const created = await streamApi(
+      'POST',
+      `/library/${creds.library}/videos`,
+      creds.key,
+      { title, ...(collection ? { collectionId: collection } : {}) }
+    );
+    if (created.status < 200 || created.status >= 300) {
+      console.warn(`[stream:create-fail] ${created.status} ${created.body.slice(0, 200)}`);
+      return res.status(created.status === 401 ? 401 : 502).json({
+        ok: false,
+        error:
+          `Bunny Stream: vytvoření videa selhalo (${created.status}).` +
+          (created.status === 401 ? ' Zkontroluj Library ID a API klíč.' : ''),
+        details: created.body.slice(0, 300),
+      });
+    }
+    guid = JSON.parse(created.body).guid;
+    if (!guid) throw new Error('Bunny Stream nevrátil guid videa');
+  } catch (err) {
+    console.error('[stream:create-error]', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+
+  console.log(`[stream] upload lib=${creds.library} guid=${guid} title="${title}"`);
+
+  // 2) Stream the request body straight to the video upload endpoint
+  const contentLength = req.headers['content-length'];
+  const uploadReq = https.request(
+    `https://video.bunnycdn.com/library/${creds.library}/videos/${guid}`,
+    {
+      method: 'PUT',
+      headers: {
+        AccessKey: creds.key,
+        'Content-Type': 'application/octet-stream',
+        ...(contentLength ? { 'Content-Length': contentLength } : {}),
+      },
+    },
+    (upRes) => {
+      const chunks = [];
+      upRes.on('data', (c) => chunks.push(c));
+      upRes.on('end', () => {
+        const status = upRes.statusCode || 0;
+        const body = Buffer.concat(chunks).toString('utf8');
+        if (status >= 200 && status < 300) {
+          res.json({
+            ok: true,
+            guid,
+            libraryId: creds.library,
+            // Shareable player page (adaptive bitrate, works everywhere)
+            url: `https://iframe.mediadelivery.net/play/${creds.library}/${guid}`,
+            embedUrl: `https://iframe.mediadelivery.net/embed/${creds.library}/${guid}`,
+          });
+        } else {
+          console.warn(`[stream:upload-fail] ${status} ${body.slice(0, 200)}`);
+          // Don't leave an empty video object behind
+          streamApi('DELETE', `/library/${creds.library}/videos/${guid}`, creds.key).catch(
+            () => {}
+          );
+          res.status(status || 502).json({
+            ok: false,
+            error: `Bunny Stream upload selhal: ${status}`,
+            details: body.slice(0, 300),
+          });
+        }
+      });
+    }
+  );
+
+  uploadReq.on('error', (err) => {
+    console.error('[stream:proxy-error]', err);
+    streamApi('DELETE', `/library/${creds.library}/videos/${guid}`, creds.key).catch(() => {});
+    if (!res.headersSent) res.status(502).json({ ok: false, error: err.message });
+  });
+  req.on('error', (err) => {
+    console.error('[stream:req-error]', err);
+    uploadReq.destroy(err);
+  });
+  req.on('aborted', () => {
+    console.warn('[stream:aborted]');
+    uploadReq.destroy();
+    streamApi('DELETE', `/library/${creds.library}/videos/${guid}`, creds.key).catch(() => {});
+  });
+
+  req.pipe(uploadReq);
 });
 
 // ────── Delete (per-user Bunny creds) ──────

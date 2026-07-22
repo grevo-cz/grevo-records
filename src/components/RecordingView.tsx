@@ -7,11 +7,7 @@ import { formatBytes } from '../lib/format';
 import { saveRecording, setUploadedUrl, deleteRecording } from '../lib/storage';
 import { convertToMp4, preloadFFmpeg } from '../lib/ffmpeg';
 import { loadBunnySettings, isBunnyConfigured } from '../lib/settings';
-import {
-  uploadToBunny,
-  isWebmMime,
-  SERVER_CONVERT_THRESHOLD_BYTES,
-} from '../lib/upload';
+import { uploadToBunny, SERVER_CONVERT_THRESHOLD_BYTES } from '../lib/upload';
 import { toast } from '../lib/toast';
 import type { StoredRecording } from '../types';
 
@@ -33,7 +29,7 @@ type SavingStage =
   | { kind: 'loading-ffmpeg'; pct: number }
   | { kind: 'converting'; pct: number }
   | { kind: 'saving' }
-  | { kind: 'uploading'; pct: number; serverConverting?: boolean };
+  | { kind: 'uploading'; pct: number };
 
 function defaultName(): string {
   const d = new Date();
@@ -115,18 +111,15 @@ export function RecordingView({ onFinish, onCancel }: Props) {
 
       // Conversion routing:
       // - native MP4 (Chrome 126+): nothing to do
-      // - WebM + Bunny configured: SKIP browser conversion entirely — the
-      //   proxy converts natively during upload (&convert=mp4) in seconds.
-      //   Browser-side wasm is single-threaded; decoding VP9 at hi-res screen
-      //   resolutions runs 10-30x slower than realtime (user: 20s video took
-      //   10+ minutes). Server does the same job in seconds.
+      // - WebM + Bunny configured: SKIP browser conversion — Bunny Stream
+      //   transcodes every upload to adaptive HLS itself, WebM included.
       // - WebM without Bunny (offline): in-browser ffmpeg.wasm for files
       //   < 150 MB — the only available path to MP4.
       const bunnyReady = isBunnyConfigured();
       if (!isMp4 && bunnyReady) {
         toast.info(
-          'Uloženo jako WebM. Při nahrání na Bunny server vytvoří MP4 (trvá sekundy).',
-          { title: 'MP4 konverze', duration: 7000 }
+          'Uloženo jako WebM. Bunny Stream ho po nahrání sám překóduje do všech kvalit.',
+          { title: 'Konverze', duration: 7000 }
         );
       } else if (!isMp4) {
         if (result.blob.size < SERVER_CONVERT_THRESHOLD_BYTES) {
@@ -163,8 +156,8 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           }
         } else {
           toast.info(
-            'Dlouhé video: MP4 konverze proběhne na serveru při nahrání na Bunny.',
-            { title: 'MP4 konverze', duration: 7000 }
+            'Dlouhé video: nech ho jako WebM a nahraj na Bunny Stream, překóduje ho sám.',
+            { title: 'Konverze', duration: 7000 }
           );
         }
       }
@@ -173,22 +166,9 @@ export function RecordingView({ onFinish, onCancel }: Props) {
       if (settings.autoUpload && isBunnyConfigured(settings)) {
         try {
           setStage({ kind: 'uploading', pct: 0 });
-          // WebM → ask the proxy to convert to MP4 server-side.
-          const wantConvert = isWebmMime(rec.mimeType);
           const up = await uploadToBunny(rec.blob, rec.name, (_l, _t, pct) =>
-            setStage({
-              kind: 'uploading',
-              pct,
-              // Upload phase done but XHR still waiting → server is converting.
-              serverConverting: wantConvert && pct >= 100,
-            })
-          , { convert: wantConvert });
-          if (wantConvert && !up.converted) {
-            toast.warning(
-              'Upload proxy nepodporuje serverovou konverzi, na Bunny je WebM. Aktualizuj proxy pro MP4.',
-              { title: 'MP4 konverze', duration: 8000 }
-            );
-          }
+            setStage({ kind: 'uploading', pct })
+          );
           const updated = await setUploadedUrl(rec.id, up.url);
           if (updated) rec = updated;
         } catch (uploadErr) {
@@ -333,10 +313,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                 {stage.kind === 'loading-ffmpeg' && 'Připravuji konvertor…'}
                 {stage.kind === 'converting' && 'Konvertuji do MP4…'}
                 {stage.kind === 'saving' && 'Ukládám…'}
-                {stage.kind === 'uploading' &&
-                  (stage.serverConverting
-                    ? 'Server konvertuje video…'
-                    : 'Nahrávám na Bunny…')}
+                {stage.kind === 'uploading' && 'Nahrávám na Bunny…'}
               </div>
               {(stage.kind === 'loading-ffmpeg' ||
                 stage.kind === 'converting' ||
@@ -359,9 +336,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
                   : stage.kind === 'converting'
                   ? 'Originál je už bezpečně uložen v Knihovně. U nahrávek z prohlížeče se % nemusí zobrazovat (chybí délka v metadatech). Konverze přesto běží, trvá zhruba 1-3x délku videa.'
                   : stage.kind === 'uploading'
-                  ? stage.serverConverting
-                    ? 'Upload hotov, server převádí WebM na MP4 (velká videa = několik minut). Nezavírej okno.'
-                    : 'Streamuji video přes upload proxy do Bunny Storage…'
+                  ? 'Nahrávám do Bunny Stream. Po dokončení Bunny video sám překóduje do všech kvalit.'
                   : 'Ukládám do knihovny…'}
               </p>
             </div>

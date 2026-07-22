@@ -2,22 +2,20 @@ import { loadBunnySettings } from './settings';
 import { PROXY_URL, UPLOAD_SECRET } from './proxy-config';
 
 export interface UploadResult {
+  /** Shareable player page (adaptive bitrate via Bunny Stream). */
   url: string;
-  storagePath: string;
-  /**
-   * True when the server converted the WebM to MP4 (proxy with convert
-   * support). Undefined/false when the file was stored as-is — if you
-   * requested convert and this is falsy, the proxy is outdated.
-   */
-  converted?: boolean;
+  /** Embed URL for <iframe> use. */
+  embedUrl?: string;
+  /** Bunny Stream video GUID. */
+  guid?: string;
 }
 
 export type UploadProgress = (loaded: number, total: number, pct: number) => void;
 
 /**
- * WebM recordings at/above this size skip the in-browser ffmpeg.wasm
- * conversion (slow, 2 GB hard limit) — they are stored as WebM and the
- * proxy converts them to MP4 natively during upload (&convert=mp4).
+ * WebM recordings at/above this size should not go through in-browser
+ * ffmpeg.wasm conversion (slow, 2 GB hard limit). With Bunny Stream this
+ * only gates the OFFLINE convert path — Stream transcodes uploads itself.
  */
 export const SERVER_CONVERT_THRESHOLD_BYTES = 150 * 1024 * 1024;
 
@@ -25,22 +23,11 @@ export function isWebmMime(mimeType: string): boolean {
   return /webm/i.test(mimeType);
 }
 
-/**
- * Uploads a recording blob to the team upload proxy.
- * Proxy URL + upload secret come from build-time constants;
- * Bunny credentials are per-user from Settings and sent as headers.
- */
 export interface UploadOptions {
   /** Max retries on transient failure (default 2 → up to 3 attempts total). */
   maxRetries?: number;
   /** Called once after each failed attempt before retry. */
   onRetry?: (attempt: number, reason: string) => void;
-  /**
-   * Ask the proxy to convert WebM → MP4 server-side (native ffmpeg).
-   * Adds &convert=mp4 to the upload URL. Old proxies ignore it and store
-   * the file as-is (check `converted` in the result).
-   */
-  convert?: boolean;
 }
 
 class UploadError extends Error {
@@ -49,34 +36,40 @@ class UploadError extends Error {
   }
 }
 
+/**
+ * Uploads a recording to the user's Bunny Stream library via the team
+ * proxy. Stream transcodes to adaptive-bitrate HLS itself, so WebM and
+ * MP4 are both uploaded as-is (no conversion step anywhere).
+ */
 function singleUploadAttempt(
   blob: Blob,
   filename: string,
-  onProgress?: UploadProgress,
-  convert?: boolean
+  onProgress?: UploadProgress
 ): Promise<UploadResult> {
   const s = loadBunnySettings();
   if (!s.enabled) {
-    return Promise.reject(new UploadError('Bunny upload je vypnutý v Settings.', false));
+    return Promise.reject(new UploadError('Bunny upload je vypnutý v Nastavení.', false));
   }
-  if (!s.storageZone) return Promise.reject(new UploadError('Chybí Storage Zone Name.', false));
-  if (!s.accessKey) return Promise.reject(new UploadError('Chybí Bunny Access Key.', false));
-  if (!s.pullZoneUrl) return Promise.reject(new UploadError('Chybí Pull Zone URL.', false));
+  if (!/^\d+$/.test(s.libraryId.trim())) {
+    return Promise.reject(new UploadError('Chybí platné Library ID (číslo).', false));
+  }
+  if (!s.apiKey.trim()) {
+    return Promise.reject(new UploadError('Chybí Stream API klíč.', false));
+  }
 
   const base = PROXY_URL.replace(/\/+$/, '');
   const url =
-    `${base}/upload?name=${encodeURIComponent(filename)}` +
-    `&folder=${encodeURIComponent(s.folder)}` +
-    (convert ? '&convert=mp4' : '');
+    `${base}/upload-stream?name=${encodeURIComponent(filename)}` +
+    (s.collectionId.trim()
+      ? `&collection=${encodeURIComponent(s.collectionId.trim())}`
+      : '');
 
   return new Promise<UploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
     xhr.setRequestHeader('x-upload-secret', UPLOAD_SECRET);
-    xhr.setRequestHeader('x-bunny-zone', s.storageZone);
-    xhr.setRequestHeader('x-bunny-host', s.storageHost || 'storage.bunnycdn.com');
-    xhr.setRequestHeader('x-bunny-key', s.accessKey);
-    xhr.setRequestHeader('x-pull-zone', s.pullZoneUrl.replace(/\/+$/, ''));
+    xhr.setRequestHeader('x-stream-library', s.libraryId.trim());
+    xhr.setRequestHeader('x-stream-key', s.apiKey.trim());
     xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream');
 
     if (onProgress) {
@@ -93,11 +86,7 @@ function singleUploadAttempt(
         data = JSON.parse(xhr.responseText);
       } catch {}
       if (xhr.status >= 200 && xhr.status < 300 && data?.ok) {
-        resolve({
-          url: data.url,
-          storagePath: data.storagePath,
-          converted: data.converted === true,
-        });
+        resolve({ url: data.url, embedUrl: data.embedUrl, guid: data.guid });
       } else {
         const transient = xhr.status === 0 || xhr.status >= 500;
         reject(
@@ -110,16 +99,13 @@ function singleUploadAttempt(
       }
     };
     xhr.onerror = () =>
-      reject(new UploadError('Síťová chyba. Zkontroluj Proxy URL a CORS.', true));
+      reject(new UploadError('Síťová chyba. Zkontroluj připojení.', true));
     xhr.ontimeout = () => reject(new UploadError('Upload timeout.', true));
     xhr.send(blob);
   });
 }
 
-/**
- * Uploads to Bunny via the team proxy with automatic retry on transient
- * failures (5xx, network errors).
- */
+/** Upload with automatic retry on transient failures (5xx, network errors). */
 export async function uploadToBunny(
   blob: Blob,
   filename: string,
@@ -131,7 +117,7 @@ export async function uploadToBunny(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      return await singleUploadAttempt(blob, filename, onProgress, options.convert);
+      return await singleUploadAttempt(blob, filename, onProgress);
     } catch (err) {
       const e = err as UploadError;
       const isTransient = e instanceof UploadError ? e.transient : false;
