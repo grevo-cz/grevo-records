@@ -131,13 +131,29 @@ export async function replaceRecordingBlob(
 
 export async function setUploadedUrl(
   id: string,
-  uploadedUrl: string
+  uploadedUrl: string,
+  streamGuid?: string
 ): Promise<StoredRecording | null> {
   const store = await tx('readwrite');
   const rec = await req<StoredRecording | undefined>(store.get(id));
   if (!rec) return null;
   rec.uploadedUrl = uploadedUrl;
   rec.uploadedAt = Date.now();
+  if (streamGuid) rec.streamGuid = streamGuid;
+  rec.streamStatus = 'processing';
+  await req(store.put(rec));
+  return rec;
+}
+
+/** Update the Bunny encode status once polling learns the outcome. */
+export async function setStreamStatus(
+  id: string,
+  status: 'processing' | 'ready' | 'error'
+): Promise<StoredRecording | null> {
+  const store = await tx('readwrite');
+  const rec = await req<StoredRecording | undefined>(store.get(id));
+  if (!rec) return null;
+  rec.streamStatus = status;
   await req(store.put(rec));
   return rec;
 }

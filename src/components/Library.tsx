@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   HardDrive,
   Play,
+  Eraser,
+  Loader2,
 } from 'lucide-react';
 import type { StoredRecording } from '../types';
 import { formatBytes, formatDate, formatDuration } from '../lib/format';
@@ -77,6 +79,12 @@ export function Library({ onOpen }: Props) {
   }, [recordings, query, filter, sort]);
 
   const uploadedCount = recordings.filter((r) => !!r.uploadedUrl).length;
+  // Safe to purge locally: on Bunny and not in an error state. Keep failed
+  // uploads local so they aren't lost.
+  const cleanupTargets = recordings.filter(
+    (r) => r.uploadedUrl && r.streamStatus !== 'error'
+  );
+  const cleanupBytes = cleanupTargets.reduce((a, r) => a + r.size, 0);
   const selectionMode = selected.size > 0;
 
   const toggleSelected = (id: string) => {
@@ -142,6 +150,32 @@ export function Library({ onOpen }: Props) {
       toast.warning(
         `Smazáno ${ids.length - failed} z ${ids.length} (${failed} selhalo).`
       );
+    }
+  };
+
+  const handleCleanupUploaded = async () => {
+    if (cleanupTargets.length === 0) return;
+    const ok = await confirmDialog({
+      title: `Uvolnit ${formatBytes(cleanupBytes)}?`,
+      message: `${cleanupTargets.length} nahrávek je bezpečně na Bunny Stream. Smažu jejich lokální kopie z prohlížeče, odkazy na Bunny zůstanou funkční. Střih u nich pak už nepůjde.`,
+      confirmLabel: 'Uvolnit místo',
+      danger: true,
+    });
+    if (!ok) return;
+    let failed = 0;
+    for (const rec of cleanupTargets) {
+      try {
+        await deleteRecording(rec.id);
+      } catch {
+        failed++;
+      }
+    }
+    clearSelection();
+    load();
+    if (failed === 0) {
+      toast.success(`Uvolněno ${formatBytes(cleanupBytes)} (${cleanupTargets.length} nahrávek).`);
+    } else {
+      toast.warning(`Uklizeno ${cleanupTargets.length - failed} z ${cleanupTargets.length}.`);
     }
   };
 
@@ -255,6 +289,16 @@ export function Library({ onOpen }: Props) {
           <option value="size">Největší</option>
           <option value="duration">Nejdelší</option>
         </select>
+
+        {cleanupTargets.length > 0 && (
+          <button
+            onClick={handleCleanupUploaded}
+            className="btn-ghost text-xs whitespace-nowrap"
+            title="Smazat lokální kopie videí, která už jsou na Bunny Stream"
+          >
+            <Eraser className="w-3.5 h-3.5" /> Uklidit nahrané ({cleanupTargets.length})
+          </button>
+        )}
       </div>
 
       {/* Bulk action bar — only when something is selected */}
@@ -421,12 +465,28 @@ function RecordingCard({
         </button>
 
         {rec.uploadedUrl && (
-          <span
-            className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-accent text-[#1A1408] text-[10px] font-semibold inline-flex items-center gap-1"
-            title="Nahráno na Bunny CDN"
-          >
-            <Cloud className="w-3 h-3" /> Bunny
-          </span>
+          rec.streamStatus === 'processing' ? (
+            <span
+              className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-bg-card/90 text-text-primary text-[10px] font-medium inline-flex items-center gap-1"
+              title="Bunny Stream video zpracovává"
+            >
+              <Loader2 className="w-3 h-3 animate-spin text-accent" /> Zpracovává…
+            </span>
+          ) : rec.streamStatus === 'error' ? (
+            <span
+              className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-danger text-white text-[10px] font-semibold inline-flex items-center gap-1"
+              title="Zpracování na Bunny selhalo"
+            >
+              <AlertTriangle className="w-3 h-3" /> Chyba
+            </span>
+          ) : (
+            <span
+              className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-accent text-[#1A1408] text-[10px] font-semibold inline-flex items-center gap-1"
+              title="Na Bunny Stream, připraveno k odeslání"
+            >
+              <Cloud className="w-3 h-3" /> Bunny
+            </span>
+          )
         )}
         {rec.durationMs > 0 && (
           <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/70 text-xs font-mono">

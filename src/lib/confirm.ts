@@ -1,4 +1,4 @@
-// Promise-based confirm dialog — pairs with components/ConfirmRoot.tsx.
+// Promise-based confirm / prompt dialogs — pair with components/ConfirmRoot.tsx.
 
 import { useEffect, useState } from 'react';
 
@@ -9,7 +9,10 @@ export interface ConfirmRequest {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
-  resolve: (ok: boolean) => void;
+  /** When present, the dialog shows a text field and resolves its value. */
+  input?: { placeholder?: string; defaultValue?: string; label?: string };
+  /** boolean for confirm dialogs; string|null for prompt dialogs. */
+  resolve: (result: boolean | string | null) => void;
 }
 
 type Listener = (queue: ConfirmRequest[]) => void;
@@ -32,15 +35,49 @@ export function confirmDialog(options: {
   danger?: boolean;
 }): Promise<boolean> {
   return new Promise((resolve) => {
-    queue = [...queue, { id: genId(), resolve, ...options }];
+    queue = [
+      ...queue,
+      { id: genId(), resolve: (r) => resolve(r === true), ...options },
+    ];
     emit();
   });
 }
 
-export function resolveConfirm(id: string, ok: boolean) {
+/** Text-input dialog. Resolves the trimmed value, or null if cancelled. */
+export function promptDialog(options: {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  placeholder?: string;
+  defaultValue?: string;
+  label?: string;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    queue = [
+      ...queue,
+      {
+        id: genId(),
+        title: options.title,
+        message: options.message,
+        confirmLabel: options.confirmLabel,
+        cancelLabel: options.cancelLabel,
+        input: {
+          placeholder: options.placeholder,
+          defaultValue: options.defaultValue,
+          label: options.label,
+        },
+        resolve: (r) => resolve(typeof r === 'string' ? r : null),
+      },
+    ];
+    emit();
+  });
+}
+
+export function resolveConfirm(id: string, result: boolean | string | null) {
   const item = queue.find((q) => q.id === id);
   if (!item) return;
-  item.resolve(ok);
+  item.resolve(result);
   queue = queue.filter((q) => q.id !== id);
   emit();
 }

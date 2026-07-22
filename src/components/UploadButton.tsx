@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react';
-import { Cloud, UploadCloud, Loader2, Copy, ExternalLink, Check } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Cloud,
+  UploadCloud,
+  Loader2,
+  Copy,
+  ExternalLink,
+  Check,
+  CheckCircle2,
+  AlertTriangle,
+} from 'lucide-react';
 import type { StoredRecording } from '../types';
-import { uploadToBunny } from '../lib/upload';
-import { setUploadedUrl } from '../lib/storage';
+import { uploadToBunny, pollStreamStatus } from '../lib/upload';
+import { setUploadedUrl, setStreamStatus, renameRecording } from '../lib/storage';
 import { isBunnyConfigured } from '../lib/settings';
 import { formatBytes } from '../lib/format';
 import { toast } from '../lib/toast';
+import { promptDialog } from '../lib/confirm';
 
 interface Props {
   recording: StoredRecording;
@@ -19,9 +29,10 @@ type State =
   | { kind: 'success'; url: string }
   | { kind: 'error'; message: string };
 
-// Normalize a URL — ensure it has https:// scheme.
-// Older recordings may have been saved with bare hostname; without scheme,
-// browsers treat them as relative paths (breaks the Otevřít button).
+// Auto-generated names look like recording-2026-07-02_17-45-38 — worth
+// prompting for something a client will actually see in the library.
+const DEFAULT_NAME_RE = /^recording-\d{4}-\d{2}-\d{2}/i;
+
 function normalizeUrl(url: string): string {
   if (!url) return url;
   if (/^https?:\/\//i.test(url)) return url;
@@ -35,46 +46,114 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       : { kind: 'idle' }
   );
   const [copied, setCopied] = useState(false);
+  const [streamState, setStreamState] = useState<
+    'processing' | 'ready' | 'error' | null
+  >(recording.uploadedUrl ? recording.streamStatus ?? 'ready' : null);
   const configured = isBunnyConfigured();
+  const pollAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (recording.uploadedUrl) {
       setState({ kind: 'success', url: recording.uploadedUrl });
+      setStreamState(recording.streamStatus ?? 'ready');
     } else {
       setState({ kind: 'idle' });
+      setStreamState(null);
     }
-  }, [recording.id, recording.uploadedUrl]);
+  }, [recording.id, recording.uploadedUrl, recording.streamStatus]);
+
+  // Resume polling if we re-open a recording that was still processing.
+  useEffect(() => {
+    if (
+      recording.uploadedUrl &&
+      recording.streamGuid &&
+      recording.streamStatus === 'processing'
+    ) {
+      startPolling(recording.id, recording.streamGuid);
+    }
+    return () => pollAbort.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording.id]);
+
+  const startPolling = (id: string, guid: string) => {
+    pollAbort.current?.abort();
+    const ac = new AbortController();
+    pollAbort.current = ac;
+    setStreamState('processing');
+    pollStreamStatus(guid, (s) => setStreamState(s.state), { signal: ac.signal })
+      .then(async (final) => {
+        if (ac.signal.aborted) return;
+        await setStreamStatus(id, final.state).catch(() => {});
+        setStreamState(final.state);
+        if (final.state === 'ready') {
+          toast.success('Video je zpracované, link je připravený poslat klientovi.', {
+            title: 'Hotovo',
+          });
+        } else if (final.state === 'error') {
+          toast.error('Bunny hlásí chybu při zpracování videa. Zkus ho nahrát znovu.', {
+            title: 'Zpracování selhalo',
+          });
+        }
+      })
+      .catch(() => {});
+  };
 
   const handleUpload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!configured) {
-      toast.warning('Nastav nejdřív Bunny upload v Settings.', {
+      toast.warning('Nastav nejdřív Bunny Stream v Nastavení.', {
         title: 'Není nastaveno',
       });
       return;
     }
+
+    // Give the video a client-facing name before it lands in the Stream
+    // library (only nudge when the name is still the auto timestamp).
+    let uploadName = recording.name;
+    if (DEFAULT_NAME_RE.test(recording.name)) {
+      const title = await promptDialog({
+        title: 'Pojmenuj video',
+        message: 'Tenhle název uvidíš v Bunny knihovně i v odkazu pro klienta.',
+        label: 'Název videa',
+        placeholder: 'Např. Homepage brief pro klienta',
+        confirmLabel: 'Nahrát',
+      });
+      if (title === null) return; // cancelled
+      const origExt = recording.name.match(/\.[^.]+$/)?.[0] || '';
+      uploadName =
+        origExt && !title.toLowerCase().endsWith(origExt.toLowerCase())
+          ? title + origExt
+          : title;
+      try {
+        await renameRecording(recording.id, uploadName);
+      } catch {
+        /* non-fatal: upload can still proceed with the chosen name */
+      }
+    }
+
     setState({ kind: 'uploading', loaded: 0, total: recording.size, pct: 0 });
     try {
       const result = await uploadToBunny(
         recording.blob,
-        recording.name,
+        uploadName,
         (loaded, total, pct) =>
           setState({ kind: 'uploading', loaded, total, pct }),
         {
           onRetry: (attempt, reason) =>
-            toast.warning(
-              `Pokus ${attempt} selhal (${reason}). Zkouším znovu…`,
-              { title: 'Upload retry', duration: 4000 }
-            ),
+            toast.warning(`Pokus ${attempt} selhal (${reason}). Zkouším znovu…`, {
+              title: 'Upload retry',
+              duration: 4000,
+            }),
         }
       );
-      const updated = await setUploadedUrl(recording.id, result.url);
+      const updated = await setUploadedUrl(recording.id, result.url, result.guid);
       setState({ kind: 'success', url: result.url });
-      toast.success(
-        'Video je na Bunny Stream. Přehrávač naběhne hned po zpracování (u dlouhých videí pár minut).',
-        { title: 'Nahráno' }
-      );
+      toast.success('Nahráno na Bunny Stream. Sleduju zpracování…', {
+        title: 'Nahráno',
+      });
       if (updated && onUploaded) onUploaded(updated);
+      if (result.guid) startPolling(recording.id, result.guid);
+      else setStreamState('ready');
     } catch (err) {
       const message = (err as Error).message;
       setState({ kind: 'error', message });
@@ -101,10 +180,22 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
       return (
         <span
           onClick={copyLink}
-          title={copied ? 'Zkopírováno' : `Kopírovat link (${normalizeUrl(state.url)})`}
+          title={
+            streamState === 'processing'
+              ? 'Bunny video zpracovává… link už jde kopírovat'
+              : copied
+              ? 'Zkopírováno'
+              : `Kopírovat link (${normalizeUrl(state.url)})`
+          }
           className="btn-ghost p-1.5 cursor-pointer text-accent"
         >
-          {copied ? <Check className="w-4 h-4" /> : <Cloud className="w-4 h-4" />}
+          {copied ? (
+            <Check className="w-4 h-4" />
+          ) : streamState === 'processing' ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Cloud className="w-4 h-4" />
+          )}
         </span>
       );
     }
@@ -121,7 +212,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
     return (
       <span
         onClick={handleUpload}
-        title={configured ? 'Nahrát na Bunny' : 'Nejdřív nastav v Settings'}
+        title={configured ? 'Nahrát na Bunny' : 'Nejdřív nastav v Nastavení'}
         className={`btn-ghost p-1.5 cursor-pointer ${configured ? '' : 'opacity-40'}`}
       >
         <UploadCloud className="w-4 h-4" />
@@ -133,9 +224,23 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
   if (state.kind === 'success') {
     return (
       <div className="flex flex-wrap items-center gap-2 bg-accent-subtle border border-accent/30 rounded-xl px-3 py-2">
-        <Cloud className="w-4 h-4 text-accent" />
-        <span className="text-sm text-accent">Na Bunny:</span>
-        <code className="text-xs text-text-primary bg-bg-elev rounded px-2 py-0.5 max-w-[280px] truncate">
+        {streamState === 'processing' ? (
+          <>
+            <Loader2 className="w-4 h-4 text-accent animate-spin" />
+            <span className="text-sm text-accent">Bunny zpracovává…</span>
+          </>
+        ) : streamState === 'error' ? (
+          <>
+            <AlertTriangle className="w-4 h-4 text-danger" />
+            <span className="text-sm text-danger">Zpracování selhalo</span>
+          </>
+        ) : (
+          <>
+            <CheckCircle2 className="w-4 h-4 text-success" />
+            <span className="text-sm text-success">Připraveno k odeslání</span>
+          </>
+        )}
+        <code className="text-xs text-text-primary bg-bg-elev rounded px-2 py-0.5 max-w-[260px] truncate">
           {normalizeUrl(state.url)}
         </code>
         <button onClick={copyLink} className="btn-ghost p-1.5 text-xs">
@@ -188,7 +293,7 @@ export function UploadButton({ recording, variant = 'secondary', onUploaded }: P
         onClick={handleUpload}
         disabled={!configured}
         className={variant === 'primary' ? 'btn-primary' : 'btn-secondary'}
-        title={configured ? undefined : 'Nejdřív nastav v Settings'}
+        title={configured ? undefined : 'Nejdřív nastav v Nastavení'}
       >
         <UploadCloud className="w-4 h-4" /> Nahrát na Bunny
       </button>

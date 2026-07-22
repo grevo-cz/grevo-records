@@ -105,6 +105,58 @@ function singleUploadAttempt(
   });
 }
 
+export interface StreamStatus {
+  state: 'processing' | 'ready' | 'error';
+  encodeProgress: number;
+}
+
+/** One-shot check of a Stream video's transcode status via the proxy. */
+export async function fetchStreamStatus(guid: string): Promise<StreamStatus> {
+  const s = loadBunnySettings();
+  const base = PROXY_URL.replace(/\/+$/, '');
+  const res = await fetch(`${base}/stream-status?guid=${encodeURIComponent(guid)}`, {
+    headers: {
+      'x-upload-secret': UPLOAD_SECRET,
+      'x-stream-library': s.libraryId.trim(),
+      'x-stream-key': s.apiKey.trim(),
+    },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Status ${res.status}`);
+  }
+  return { state: data.state, encodeProgress: data.encodeProgress ?? 0 };
+}
+
+/**
+ * Polls a Stream video until it finishes transcoding (or errors / times out).
+ * Calls onUpdate on every poll. Returns the terminal status. Stops early if
+ * the AbortSignal fires (e.g. the component unmounts).
+ */
+export async function pollStreamStatus(
+  guid: string,
+  onUpdate: (s: StreamStatus) => void,
+  opts: { signal?: AbortSignal; intervalMs?: number; timeoutMs?: number } = {}
+): Promise<StreamStatus> {
+  const interval = opts.intervalMs ?? 5000;
+  const deadline = Date.now() + (opts.timeoutMs ?? 20 * 60 * 1000);
+  // A few consecutive read failures shouldn't abort a long transcode.
+  let misses = 0;
+  while (!opts.signal?.aborted) {
+    try {
+      const s = await fetchStreamStatus(guid);
+      misses = 0;
+      onUpdate(s);
+      if (s.state === 'ready' || s.state === 'error') return s;
+    } catch {
+      if (++misses >= 5) return { state: 'processing', encodeProgress: 0 };
+    }
+    if (Date.now() > deadline) return { state: 'processing', encodeProgress: 0 };
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  return { state: 'processing', encodeProgress: 0 };
+}
+
 /** Upload with automatic retry on transient failures (5xx, network errors). */
 export async function uploadToBunny(
   blob: Blob,

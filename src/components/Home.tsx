@@ -103,7 +103,7 @@ export function Home({ onStartRecording, onOpenSettings }: HomeProps) {
             <div className="font-medium text-sm">Bunny upload není nastavený</div>
             <p className="text-xs text-text-secondary mt-1">
               Bez něj fungují jen lokální nahrávky a stažení do Downloads.
-              Sdílení linků klientům vyžaduje Bunny Storage.
+              Sdílení linků klientům vyžaduje Bunny Stream.
             </p>
           </div>
           {onOpenSettings && (

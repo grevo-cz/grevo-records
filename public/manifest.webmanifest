@@ -1,7 +1,7 @@
 {
   "name": "Records By Grevo",
   "short_name": "Records",
-  "description": "Lokální screen recorder se střihem a sdílením přes Bunny CDN.",
+  "description": "Lokální screen recorder se střihem a sdílením přes Bunny Stream.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

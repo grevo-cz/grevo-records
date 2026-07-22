@@ -169,7 +169,7 @@ export function RecordingView({ onFinish, onCancel }: Props) {
           const up = await uploadToBunny(rec.blob, rec.name, (_l, _t, pct) =>
             setStage({ kind: 'uploading', pct })
           );
-          const updated = await setUploadedUrl(rec.id, up.url);
+          const updated = await setUploadedUrl(rec.id, up.url, up.guid);
           if (updated) rec = updated;
         } catch (uploadErr) {
           console.warn('Auto-upload failed:', uploadErr);

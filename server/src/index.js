@@ -519,6 +519,49 @@ app.post('/upload-stream', async (req, res) => {
   req.pipe(uploadReq);
 });
 
+// ────── Bunny Stream encode status ──────
+// Bunny status codes: 0 Created, 1 Uploaded, 2 Processing, 3 Transcoding,
+// 4 Finished, 5 Error, 6 UploadFailed. We collapse them to ready/processing/error.
+app.get('/stream-status', async (req, res) => {
+  if (!checkSecret(req, res)) return;
+  const creds = readStreamCreds(req, res);
+  if (!creds) return;
+  const guid = String(req.query.guid || '').trim();
+  if (!guid) return res.status(400).json({ ok: false, error: 'Missing "guid"' });
+
+  try {
+    const r = await streamApi(
+      'GET',
+      `/library/${creds.library}/videos/${guid}`,
+      creds.key
+    );
+    if (r.status < 200 || r.status >= 300) {
+      return res.status(r.status === 404 ? 404 : 502).json({
+        ok: false,
+        error: `Bunny Stream status ${r.status}`,
+      });
+    }
+    const v = JSON.parse(r.body);
+    const code = Number(v.status);
+    const state =
+      code >= 4 && code !== 5 && code !== 6
+        ? 'ready'
+        : code === 5 || code === 6
+        ? 'error'
+        : 'processing';
+    res.json({
+      ok: true,
+      state,
+      code,
+      encodeProgress: Number(v.encodeProgress) || 0,
+      title: v.title,
+    });
+  } catch (err) {
+    console.error('[stream:status-error]', err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
 // ────── Delete (per-user Bunny creds) ──────
 app.delete('/file', (req, res) => {
   if (!checkSecret(req, res)) return;
