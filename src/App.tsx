@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { MobileNav } from './components/MobileNav';
 import { Home } from './components/Home';
 import { RecordingView } from './components/RecordingView';
 import { Preview } from './components/Preview';
@@ -45,20 +46,35 @@ export default function App() {
     return <Login onLogin={setSession} />;
   }
 
+  const chrome = view !== 'recording';
+
   return (
-    <div className="flex h-screen w-screen bg-bg text-text-primary font-sans antialiased">
+    <div className="flex h-[100dvh] w-screen bg-bg text-text-primary font-sans antialiased">
       {/* Crash recovery: orphaned chunks from a recording that died with the tab */}
-      {view !== 'recording' && <RecoveryBanner onRecovered={refreshLibrary} />}
-      {view !== 'recording' && (
-        <Sidebar
-          view={view}
-          session={session}
-          onNavigate={(v) => setView(v)}
-          onLogout={handleLogout}
-        />
+      {chrome && <RecoveryBanner onRecovered={refreshLibrary} />}
+      {chrome && (
+        <>
+          <Sidebar
+            view={view}
+            session={session}
+            onNavigate={(v) => setView(v)}
+            onLogout={handleLogout}
+          />
+          <MobileNav
+            view={view}
+            session={session}
+            onNavigate={(v) => setView(v)}
+            onLogout={handleLogout}
+          />
+        </>
       )}
       <main className="flex-1 min-w-0 relative overflow-hidden">
-        <div className="h-full overflow-auto">
+        {/* On mobile, clear the fixed top/bottom bars (chrome only). */}
+        <div
+          className={`h-full overflow-auto ${
+            chrome ? 'pt-14 pb-16 md:pt-0 md:pb-0' : ''
+          }`}
+        >
           {view === 'home' && (
             <Home
               onStartRecording={() => setView('recording')}

@@ -99,7 +99,7 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
 
   return (
     <div className="min-h-full p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto animate-fade-in">
-      <header className="flex items-center justify-between gap-4 mb-5 pt-2">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 mb-5 pt-2">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button onClick={onBack} className="btn-ghost p-2">
             <ArrowLeft className="w-5 h-5" />
@@ -162,7 +162,7 @@ export function Preview({ recording, onBack, onNew, onUpdated, onDeleted }: Prop
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap sm:justify-end w-full sm:w-auto">
           <ConvertMp4Button recording={recording} onConverted={onUpdated} />
           <UploadButton recording={recording} variant="secondary" onUploaded={onUpdated} />
           <button onClick={handleDownload} className="btn-secondary">

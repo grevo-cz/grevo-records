@@ -34,7 +34,7 @@ function initials(name: string): string {
 
 export function Sidebar({ view, session, onNavigate, onLogout }: SidebarProps) {
   return (
-    <aside className="w-52 shrink-0 border-r border-bg-border bg-bg-elev flex flex-col">
+    <aside className="hidden md:flex w-52 shrink-0 border-r border-bg-border bg-bg-elev flex-col">
       {/* Wordmark */}
       <div className="px-5 pt-6 pb-5">
         <div className="display text-[19px] font-bold leading-none text-text-primary">
